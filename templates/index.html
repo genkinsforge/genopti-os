@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>License Scanner</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        #header {
+            background-color: #333;
+            color: white;
+            padding: 1rem;
+            text-align: center;
+            flex: 0 0 auto;
+        }
+        
+        #header h1 {
+            margin: 0;
+            font-size: 1.2em;
+            color: white;
+            opacity: 0.8;
+        }
+        
+        #header h2 {
+            margin: 0.5em 0 0 0;
+            font-size: 1.8em;
+            color: white;
+            font-weight: bold;
+        }
+        
+        #content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 1rem;
+        }
+        
+        #scanner-input {
+            position: absolute;
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        #result-display {
+            flex: 1;
+            margin-top: 1rem;
+            padding: 2rem;
+            border-radius: 8px;
+            transition: background-color 0.3s ease;
+        }
+        
+        .flash-red {
+            animation: flashRed 1s;
+        }
+        
+        @keyframes flashRed {
+            0%, 100% { background-color: transparent; }
+            50% { background-color: #ffcccc; }
+        }
+        
+        .valid {
+            background-color: #90EE90;
+        }
+        
+        .invalid {
+            background-color: #FFB6C1;
+        }
+        
+        .result-text {
+            font-size: 1.2em;
+            margin: 0.5em 0;
+        }
+        
+        .validation-message {
+            font-size: 1.5em;
+            font-weight: bold;
+            text-align: center;
+            margin-top: 1em;
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1 id="current-date"></h1>
+        <h2 id="twenty-one-date"></h2>
+    </div>
+    
+    <div id="content">
+        <input type="text" id="scanner-input" autocomplete="off">
+        <div id="result-display">
+            <p class="result-text" id="name-display"></p>
+            <p class="result-text" id="address-display"></p>
+            <p class="result-text" id="dob-display"></p>
+            <p class="result-text" id="expiration-display"></p>
+            <p class="validation-message" id="validation-message"></p>
+        </div>
+    </div>
+
+    <script>
+        // Update current date and 21-year date
+        function updateDate() {
+            const now = new Date();
+            const options = { year: 'numeric', month: 'long', day: 'numeric' };
+            
+            // Update current date (smaller)
+            document.getElementById('current-date').textContent = 
+                "Current Date: " + now.toLocaleDateString('en-US', options);
+            
+            // Calculate and update 21-year date (larger)
+            const twentyOneYearsAgo = new Date(now);
+            twentyOneYearsAgo.setFullYear(now.getFullYear() - 21);
+            document.getElementById('twenty-one-date').textContent = 
+                "Must be born before " + twentyOneYearsAgo.toLocaleDateString('en-US', options) + " to be 21+";
+        }
+        
+        // Initialize
+        updateDate();
+        setInterval(updateDate, 60000); // Update every minute
+        
+        // Focus hidden input field
+        const inputField = document.getElementById('scanner-input');
+        inputField.focus();
+        
+        // Maintain focus on the input field
+        document.addEventListener('click', () => {
+            inputField.focus();
+        });
+        
+        let scanBuffer = '';
+        let scanTimeout;
+        
+        inputField.addEventListener('input', (e) => {
+            clearTimeout(scanTimeout);
+            
+            scanBuffer += e.target.value;
+            inputField.value = '';
+            
+            // Wait for complete scan
+            scanTimeout = setTimeout(() => {
+                if (scanBuffer) {
+                    processScan(scanBuffer);
+                    scanBuffer = '';
+                }
+            }, 100);
+        });
+
+        async function processScan(scanData) {
+            try {
+                const response = await fetch('/process_scan', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ scan_data: scanData })
+                });
+                
+                const result = await response.json();
+                updateDisplay(result);
+            } catch (error) {
+                console.error('Error processing scan:', error);
+                showError('Error processing scan data');
+            }
+        }
+
+        function updateDisplay(result) {
+            const resultDisplay = document.getElementById('result-display');
+            
+            if (!result.success) {
+                showError(result.error);
+                return;
+            }
+            
+            // Update display fields
+            document.getElementById('name-display').textContent = `Name: ${result.name}`;
+            document.getElementById('address-display').textContent = `Address: ${result.address}`;
+            document.getElementById('dob-display').textContent = `Date of Birth: ${result.dob}`;
+            document.getElementById('expiration-display').textContent = `License Expiration: ${result.expiration}`;
+            document.getElementById('validation-message').textContent = result.validation_message;
+            
+            // Update styling
+            resultDisplay.className = result.is_valid ? 'valid' : 'invalid';
+        }
+
+        function showError(message) {
+            const resultDisplay = document.getElementById('result-display');
+            resultDisplay.classList.add('flash-red');
+            
+            // Clear previous results
+            document.getElementById('name-display').textContent = '';
+            document.getElementById('address-display').textContent = '';
+            document.getElementById('dob-display').textContent = '';
+            document.getElementById('expiration-display').textContent = '';
+            document.getElementById('validation-message').textContent = `ERROR: ${message}`;
+            
+            setTimeout(() => {
+                resultDisplay.classList.remove('flash-red');
+            }, 1000);
+        }
+    </script>
+</body>
+</html>
