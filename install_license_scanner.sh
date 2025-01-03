@@ -1,49 +1,78 @@
 #!/bin/bash
 
-# Detect current script location
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
-APP_SOURCE_DIR="$SCRIPT_DIR"
+# Exit immediately if a command exits with a non-zero status
+set -e
 
-# Configuration variables
-DESTINATION_DIR="/opt/license_scanner"
-SERVICE_NAME="license_scanner.service"
+# Variables
+APP_DIR="/opt/license_scanner"
+VENV_DIR="$APP_DIR/venv"
+SERVICE_FILE="/etc/systemd/system/license_scanner.service"
+REQUIREMENTS_FILE="$APP_DIR/requirements.txt"
+APP_SCRIPT="$APP_DIR/app.py"
 
-# Create a new user 'dl_scanner' with no shell access
-echo "Creating dl_scanner user..."
-sudo adduser --system --no-create-home --shell /usr/sbin/nologin dl_scanner
+# Ensure running as root
+if [[ $EUID -ne 0 ]]; then
+   echo "This script must be run as root"
+   exit 1
+fi
 
-# Set up the folder in /opt with dl_scanner permissions
-echo "Setting up directory structure under /opt..."
-sudo mkdir -p "$DESTINATION_DIR"
-sudo chown dl_scanner:dl_scanner "$DESTINATION_DIR"
+echo "Installing License Scanner..."
 
-# Copy over the app and all of the subfolders
-echo "Copying application to $DESTINATION_DIR..."
-sudo rsync -av --chown=dl_scanner:dl_scanner "$APP_SOURCE_DIR/" "$DESTINATION_DIR/"
+# Step 1: Create application directory if it doesn't exist
+if [ ! -d "$APP_DIR" ]; then
+    echo "Creating application directory at $APP_DIR..."
+    mkdir -p "$APP_DIR"
+fi
 
-# Create the systemd service file
-SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME"
-echo "Creating systemd service file at $SERVICE_FILE..."
-sudo bash -c "cat << EOF > $SERVICE_FILE
+# Step 2: Copy application files to the target directory
+echo "Copying application files to $APP_DIR..."
+cp -r ./* "$APP_DIR"
+
+# Step 3: Install Python and dependencies
+echo "Installing Python dependencies..."
+apt-get update
+apt-get install -y python3 python3-venv python3-pip
+
+# Step 4: Set up the virtual environment
+if [ ! -d "$VENV_DIR" ]; then
+    echo "Creating virtual environment in $VENV_DIR..."
+    python3 -m venv "$VENV_DIR"
+fi
+
+echo "Activating virtual environment and installing dependencies..."
+source "$VENV_DIR/bin/activate"
+pip install --upgrade pip
+pip install -r "$REQUIREMENTS_FILE"
+deactivate
+
+# Step 5: Create systemd service
+echo "Setting up systemd service..."
+
+cat > "$SERVICE_FILE" <<EOL
 [Unit]
 Description=License Scanner Flask App Service
 After=network.target
 
 [Service]
-User=dl_scanner
-WorkingDirectory=$DESTINATION_DIR
-ExecStart=/opt/license_scanner/venv/bin/python3 /opt/license_scanner/app.py
+User=root
+WorkingDirectory=$APP_DIR
+ExecStart=$VENV_DIR/bin/python $APP_SCRIPT
 Restart=always
-Environment=\"PATH=/opt/license_scanner/venv/bin\"
+Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target
-EOF"
+EOL
 
-# Reload systemd, enable and start the service using sudo
-echo "Configuring systemd to manage the service..."
-sudo systemctl daemon-reload
-sudo systemctl enable "$SERVICE_NAME"
-sudo systemctl start "$SERVICE_NAME"
+# Step 6: Reload systemd, enable and start the service
+echo "Reloading systemd, enabling, and starting the service..."
+systemctl daemon-reload
+systemctl enable license_scanner.service
+systemctl start license_scanner.service
 
-echo "Installation complete. The license scanner app should now be running as a service."
+# Step 7: Verify service status
+echo "Verifying service status..."
+systemctl status license_scanner.service
+
+echo "License Scanner installed and started successfully!"
+
