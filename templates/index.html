@@ -11,7 +11,7 @@
             display: flex;
             flex-direction: column;
         }
-        
+
         #header {
             background-color: #333;
             color: white;
@@ -19,34 +19,36 @@
             text-align: center;
             flex: 0 0 auto;
         }
-        
+
         #header h1 {
             margin: 0;
             font-size: 1.2em;
             color: white;
             opacity: 0.8;
         }
-        
+
         #header h2 {
             margin: 0.5em 0 0 0;
             font-size: 1.8em;
             color: white;
             font-weight: bold;
         }
-        
+
         #content {
             flex: 1;
             display: flex;
             flex-direction: column;
             padding: 1rem;
         }
-        
+
+        /* Hidden scanner input */
         #scanner-input {
             position: absolute;
             opacity: 0;
             pointer-events: none;
         }
-        
+
+        /* Display region for scan results */
         #result-display {
             flex: 1;
             margin-top: 1rem;
@@ -54,29 +56,29 @@
             border-radius: 8px;
             transition: background-color 0.3s ease;
         }
-        
+
         .flash-red {
             animation: flashRed 1s;
         }
-        
+
         @keyframes flashRed {
             0%, 100% { background-color: transparent; }
             50% { background-color: #ffcccc; }
         }
-        
+
         .valid {
             background-color: #90EE90;
         }
-        
+
         .invalid {
             background-color: #FFB6C1;
         }
-        
+
         .result-text {
             font-size: 1.2em;
             margin: 0.5em 0;
         }
-        
+
         .validation-message {
             font-size: 1.5em;
             font-weight: bold;
@@ -90,9 +92,12 @@
         <h1 id="current-date"></h1>
         <h2 id="twenty-one-date"></h2>
     </div>
-    
+
     <div id="content">
+        <!-- Hidden input that receives data from the barcode scanner -->
         <input type="text" id="scanner-input" autocomplete="off">
+
+        <!-- Display area for scanning status or final results -->
         <div id="result-display">
             <p class="result-text" id="name-display"></p>
             <p class="result-text" id="address-display"></p>
@@ -103,53 +108,78 @@
     </div>
 
     <script>
-        // Update current date and 21-year date
+        // 1) Display current date and the 21-year cutoff
         function updateDate() {
             const now = new Date();
             const options = { year: 'numeric', month: 'long', day: 'numeric' };
-            
-            // Update current date (smaller)
-            document.getElementById('current-date').textContent = 
+
+            document.getElementById('current-date').textContent =
                 "Current Date: " + now.toLocaleDateString('en-US', options);
-            
-            // Calculate and update 21-year date (larger)
+
+            // Calculate 21 years ago
             const twentyOneYearsAgo = new Date(now);
             twentyOneYearsAgo.setFullYear(now.getFullYear() - 21);
-            document.getElementById('twenty-one-date').textContent = 
+            document.getElementById('twenty-one-date').textContent =
                 "Must be born before " + twentyOneYearsAgo.toLocaleDateString('en-US', options) + " to be 21+";
         }
-        
-        // Initialize
         updateDate();
-        setInterval(updateDate, 60000); // Update every minute
-        
-        // Focus hidden input field
+        setInterval(updateDate, 60000); // update every minute
+
+        // 2) Keep the hidden input in focus to capture scanner data
         const inputField = document.getElementById('scanner-input');
         inputField.focus();
-        
-        // Maintain focus on the input field
         document.addEventListener('click', () => {
             inputField.focus();
         });
-        
-        let scanBuffer = '';
-        let scanTimeout;
-        
-        inputField.addEventListener('input', (e) => {
-            clearTimeout(scanTimeout);
-            
-            scanBuffer += e.target.value;
-            inputField.value = '';
-            
-            // Wait for complete scan
-            scanTimeout = setTimeout(() => {
-                if (scanBuffer) {
-                    processScan(scanBuffer);
-                    scanBuffer = '';
-                }
-            }, 100);
-        });
 
+        // 3) State and timing for scanning
+        let scanBuffer = '';
+        let scanTimeout = null;
+        let scanning = false;
+
+        // Customize this if your scanner sends data slowly or quickly
+        const SCAN_TIMEOUT_MS = 150; 
+
+        // Interval for "Reading scanning data..." animation
+        let scanningAnimationInterval = null;
+
+        /**
+         * Show a "Reading scanning data..." message (only if we're starting a new scan).
+         * We'll animate the ellipsis to give a sense of progress.
+         */
+        function showScanningMessage() {
+            const resultDisplay = document.getElementById('result-display');
+            resultDisplay.classList.remove('valid', 'invalid', 'flash-red');
+
+            // Show placeholders
+            document.getElementById('name-display').textContent = 'Reading scanning data...';
+            document.getElementById('address-display').textContent = '';
+            document.getElementById('dob-display').textContent = '';
+            document.getElementById('expiration-display').textContent = '';
+            document.getElementById('validation-message').textContent = '';
+
+            // Animate the "..." with an interval
+            let dotCount = 1;
+            scanningAnimationInterval = setInterval(() => {
+                const dots = '.'.repeat(dotCount % 4); // cycles ., .., ..., (no dots), repeat
+                document.getElementById('name-display').textContent = `Reading scanning data${dots}`;
+                dotCount++;
+            }, 500);
+        }
+
+        /**
+         * Clear the scanning animation if active.
+         */
+        function hideScanningMessage() {
+            if (scanningAnimationInterval) {
+                clearInterval(scanningAnimationInterval);
+                scanningAnimationInterval = null;
+            }
+        }
+
+        /**
+         * Send the collected scan data to our server for processing.
+         */
         async function processScan(scanData) {
             try {
                 const response = await fetch('/process_scan', {
@@ -159,7 +189,7 @@
                     },
                     body: JSON.stringify({ scan_data: scanData })
                 });
-                
+
                 const result = await response.json();
                 updateDisplay(result);
             } catch (error) {
@@ -168,40 +198,88 @@
             }
         }
 
+        /**
+         * Update the display with the final result (success or fail).
+         */
         function updateDisplay(result) {
+            hideScanningMessage();   // always stop the "..."
+            scanning = false;        // scanning is done
+
             const resultDisplay = document.getElementById('result-display');
-            
             if (!result.success) {
                 showError(result.error);
                 return;
             }
-            
-            // Update display fields
-            document.getElementById('name-display').textContent = `Name: ${result.name}`;
-            document.getElementById('address-display').textContent = `Address: ${result.address}`;
-            document.getElementById('dob-display').textContent = `Date of Birth: ${result.dob}`;
-            document.getElementById('expiration-display').textContent = `License Expiration: ${result.expiration}`;
-            document.getElementById('validation-message').textContent = result.validation_message;
-            
-            // Update styling
+
+            // On success, fill fields
+            document.getElementById('name-display').textContent =
+                `Name: ${result.name}`;
+            document.getElementById('address-display').textContent =
+                `Address: ${result.address}`;
+            document.getElementById('dob-display').textContent =
+                `Date of Birth: ${result.dob}`;
+            document.getElementById('expiration-display').textContent =
+                `License Expiration: ${result.expiration}`;
+            document.getElementById('validation-message').textContent =
+                result.validation_message;
+
+            // Green if valid, pink if invalid
             resultDisplay.className = result.is_valid ? 'valid' : 'invalid';
         }
 
+        /**
+         * Show an error message, e.g., if parsing failed.
+         */
         function showError(message) {
+            hideScanningMessage();
+            scanning = false;
+
             const resultDisplay = document.getElementById('result-display');
             resultDisplay.classList.add('flash-red');
-            
-            // Clear previous results
+
+            // Clear fields
             document.getElementById('name-display').textContent = '';
             document.getElementById('address-display').textContent = '';
             document.getElementById('dob-display').textContent = '';
             document.getElementById('expiration-display').textContent = '';
             document.getElementById('validation-message').textContent = `ERROR: ${message}`;
-            
+
             setTimeout(() => {
                 resultDisplay.classList.remove('flash-red');
             }, 1000);
         }
+
+        /**
+         * Handle input from the scanner. We'll accumulate characters, and
+         * after SCAN_TIMEOUT_MS with no new characters, assume the scan is done.
+         */
+        inputField.addEventListener('input', (e) => {
+            // Start scanning if we aren't already
+            if (!scanning) {
+                scanning = true;
+                scanBuffer = ''; 
+                showScanningMessage();
+            }
+
+            // Add new characters to the buffer
+            scanBuffer += e.target.value;
+            inputField.value = '';
+
+            // Reset the timer
+            clearTimeout(scanTimeout);
+            scanTimeout = setTimeout(() => {
+                // Once no new data for SCAN_TIMEOUT_MS, finalize the scan
+                if (scanning && scanBuffer.trim().length > 0) {
+                    processScan(scanBuffer.trim());
+                } else {
+                    // If the user typed something but it was empty or quickly erased,
+                    // just stop scanning, hide message
+                    hideScanningMessage();
+                    scanning = false;
+                }
+            }, SCAN_TIMEOUT_MS);
+        });
     </script>
 </body>
 </html>
+
