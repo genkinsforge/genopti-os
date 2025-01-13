@@ -13,6 +13,11 @@ SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 REQUIREMENTS_FILE="$APP_DIR/requirements.txt"
 APP_SCRIPT="$APP_DIR/app.py"
 
+# Default Environment Variable Values
+DEFAULT_DEBUG_MODE="0"            # 0=normal mode, 1=debug
+DEFAULT_SCAN_RESET_SECONDS="15"   # Time in seconds before clearing the screen
+DEFAULT_SCAN_INACTIVITY_MS="300"  # Inactivity timeout in ms before finalizing the scan
+
 # --[ Root Check ]------------------------------------------------------------
 if [[ $EUID -ne 0 ]]; then
    echo "This script must be run as root."
@@ -83,20 +88,18 @@ ExecStart=$VENV_DIR/bin/python $APP_SCRIPT
 Restart=always
 Environment=PYTHONUNBUFFERED=1
 
+# New environment variables
+Environment=DEBUG_MODE=${DEFAULT_DEBUG_MODE}
+Environment=SCAN_RESET_SECONDS=${DEFAULT_SCAN_RESET_SECONDS}
+Environment=SCAN_INACTIVITY_MS=${DEFAULT_SCAN_INACTIVITY_MS}
+
 # Security Hardening
-# Drop all capabilities; if you don’t need them, it's safer to remove them.
 CapabilityBoundingSet=
 AmbientCapabilities=
 NoNewPrivileges=true
-
-# Protect important system directories from write.
 ProtectSystem=full
 ProtectHome=true
-
-# Private /tmp and /var/tmp for this service only.
 PrivateTmp=true
-
-# Restrict the type of filesystem access.
 ProtectControlGroups=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
@@ -116,4 +119,5 @@ echo "Verifying service status..."
 systemctl status "$SERVICE_NAME".service || true
 
 echo "$SERVICE_NAME installed and started successfully under user '$SERVICE_USER'."
+echo "Default ENV Vars: DEBUG_MODE=${DEFAULT_DEBUG_MODE}, SCAN_RESET_SECONDS=${DEFAULT_SCAN_RESET_SECONDS}, SCAN_INACTIVITY_MS=${DEFAULT_SCAN_INACTIVITY_MS}"
 
