@@ -30,16 +30,14 @@ logging.basicConfig(
 )
 
 # ------------------------------------------------------------------------------
-# 2. Old AAMVA Parsing Logic
+# 2. Improved AAMVA Parsing Logic
 # ------------------------------------------------------------------------------
 class LicenseParser:
-    # This is the original set of AAMVA codes you used previously
     VALID_AAMVA_CODES = [
-        'DCA','DCB','DCD','DBA','DCS','DAC','DAD','DBB','DBC','DBD','DAU','DAY',
-        'DAG','DAH','DAI','DAJ','DAK','DAQ','DCF','DCG','DDE','DDF','DDG'
+        'DCA', 'DCB', 'DCD', 'DBA', 'DCS', 'DAC', 'DAD', 'DBB', 'DBC', 'DBD', 'DAU', 'DAY',
+        'DAG', 'DAH', 'DAI', 'DAJ', 'DAK', 'DAQ', 'DCF', 'DCG', 'DDE', 'DDF', 'DDG'
     ]
 
-    # This is your original field map
     AAMVA_FIELD_MAP = {
         'DCS': 'last_name',
         'DAC': 'first_name',
@@ -61,23 +59,32 @@ class LicenseParser:
     @staticmethod
     def parse_aamva(data: str) -> dict:
         """
-        The same old parse logic you had, which uses a regex to find each code block
-        and splits them into fields.
+        Enhanced parsing logic to handle varying AAMVA formats with robust error handling.
         """
         if not (data.startswith('@ANSI ') or data.startswith('@')):
             raise ValueError("Invalid AAMVA format: Missing '@ANSI ' or '@' prefix.")
 
         valid_code_pattern = '|'.join(LicenseParser.VALID_AAMVA_CODES)
-        pattern = rf'(?P<code>(?:{valid_code_pattern}))(?P<value>.*?)(?=(?:{valid_code_pattern})|$)'
+        pattern = rf'(?P<code>{valid_code_pattern})(?P<value>.*?)(?=(?:{valid_code_pattern})|$)'
         matches = list(re.finditer(pattern, data, flags=re.DOTALL))
 
         parsed_fields = {}
+        unmatched_data = data
+
         for match in matches:
             code = match.group('code')
             value = match.group('value').strip()
+            unmatched_data = unmatched_data.replace(f"{code}{value}", '', 1)
+
             if code in LicenseParser.AAMVA_FIELD_MAP:
                 friendly_key = LicenseParser.AAMVA_FIELD_MAP[code]
                 parsed_fields[friendly_key] = value
+            else:
+                logging.warning(f"Unknown AAMVA field code encountered: {code} with value: {value}")
+
+        # Log any data that wasn't matched
+        if unmatched_data.strip():
+            logging.warning(f"Unmatched data: {unmatched_data.strip()}")
 
         # Convert known date fields from MMDDYYYY to date objects
         for date_key in ['dob', 'expiration', 'issue_date']:
@@ -89,7 +96,6 @@ class LicenseParser:
                 except ValueError:
                     logging.warning(f"Could not parse date field '{date_key}': {raw_val}")
             elif raw_val:
-                # It's some unexpected format, keep as string
                 logging.warning(f"Unexpected date format for '{date_key}': {raw_val}")
 
         return parsed_fields
