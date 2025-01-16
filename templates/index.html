@@ -1,550 +1,520 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>License Scanner (Open Source)</title>
-  <style>
-    body {
-      margin: 0;
-      padding: 0;
-      font-family: Arial, sans-serif;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden; /* prevent scrolling globally if desired */
-    }
+    <title>License Scanner</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background-color: white;
+        }
 
-    .header-section {
-      background-color: #333;
-      color: white;
-      padding: 1rem;
-      text-align: center;
-      flex: 0 0 auto;
-    }
+        .header-section {
+            background-color: #333;
+            color: white;
+            padding: 1rem;
+            text-align: center;
+            flex: 0 0 auto;
+        }
 
-    /* Hide or show sections */
-    .hidden {
-      display: none !important;
-    }
+        .hidden {
+            display: none !important;
+        }
 
-    /* Normal header */
-    #normal-header h1 {
-      margin: 0;
-      font-size: 1.2em;
-      color: white;
-      opacity: 0.8;
-    }
-    #normal-header h2 {
-      margin: 0.5em 0 0 0;
-      font-size: 1.8em;
-      color: white;
-      font-weight: bold;
-    }
+        /* Normal header */
+        #normal-header h1 {
+            margin: 0;
+            font-size: 1.2em;
+            color: white;
+            opacity: 0.8;
+        }
+        #normal-header h2 {
+            margin: 0.5em 0 0 0;
+            font-size: 1.8em;
+            color: white;
+            font-weight: bold;
+        }
 
-    /* Setup header */
-    #setup-header h1 {
-      margin: 0;
-      font-size: 2em;
-      color: #FFD700; /* gold-ish color for emphasis */
-      text-transform: uppercase;
-      font-weight: bold;
-    }
+        /* Setup header */
+        #setup-header h1 {
+            margin: 0;
+            font-size: 2em;
+            color: #FFD700;
+            text-transform: uppercase;
+            font-weight: bold;
+        }
 
-    #content {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      padding: 1rem;
-      overflow: hidden; /* no scrolling in main content */
-    }
+        #content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 1rem;
+            overflow: hidden;
+        }
 
-    #scanner-input {
-      position: absolute;
-      opacity: 0;
-      pointer-events: none;
-    }
+        /* Normal content */
+        #normal-content {
+            flex: 1;
+            margin-top: 1rem;
+            padding: 2rem;
+            border-radius: 8px;
+            transition: background-color 0.3s ease;
+        }
 
-    /* Normal content - scanning results */
-    #normal-content {
-      flex: 1;
-      margin-top: 1rem;
-      padding: 2rem;
-      border-radius: 8px;
-      transition: background-color 0.3s ease;
-    }
+        .result-text {
+            font-size: 1.2em;
+            margin: 0.5em 0;
+            background: none;
+        }
 
-    /* Setup content - system info, Wi-Fi config, etc. */
-    #setup-content {
-      flex: 1;
-      margin-top: 1rem;
-      padding: 2rem;
-      border-radius: 8px;
-      background-color: #F0F0F0;
-      color: #333;
-    }
+        /* Remove the default background from raw-data-display */
+        #raw-data-display {
+            font-family: monospace;
+            font-size: 0.9em;
+            white-space: pre-wrap;
+            margin-top: 1em;
+            border-radius: 4px;
+            background: none;
+        }
 
-    /* normal content: valid/invalid background colors */
-    .valid {
-      background-color: #90EE90;
-    }
-    .invalid {
-      background-color: #FFB6C1;
-    }
+        #scanner-input {
+            position: absolute;
+            opacity: 0;
+            pointer-events: none;
+        }
 
-    .result-text {
-      font-size: 1.2em;
-      margin: 0.5em 0;
-    }
-    .validation-message {
-      font-size: 1.5em;
-      font-weight: bold;
-      text-align: center;
-      margin-top: 1em;
-    }
+        /* Normal content */
+        #normal-content {
+            flex: 1;
+            transition: background-color 0.3s ease;
+        }
 
-    /* setup content styling */
-    .setup-info {
-      margin-bottom: 1em;
-    }
-    .setup-info-title {
-      font-weight: bold;
-      margin-right: 0.5em;
-    }
+        /* Setup content */
+        #setup-content {
+            flex: 1;
+            margin-top: 1rem;
+            padding: 2rem;
+            border-radius: 8px;
+            background-color: #F0F0F0;
+            color: #333;
+        }
 
-    /* Animation for dots */
-    @keyframes dot {
-      0% { content: "."; }
-      33% { content: ".."; }
-      66% { content: "..."; }
-      100% { content: "."; }
-    }
+        .valid { background-color: #90EE90; }
+        .invalid { background-color: #FFB6C1; }
 
-    /* Apply the animation */
-    #wifi-animation::after {
-      content: ".";
-      animation: dot 1s steps(4) infinite;
-    }
+        .result-text {
+            font-size: 1.2em;
+            margin: 0.5em 0;
+        }
+        .validation-message {
+            font-size: 1.5em;
+            font-weight: bold;
+            text-align: center;
+            margin-top: 1em;
+        }
 
-    /* Additional styles for configuring and completed messages */
-    #wifi-completed {
-      font-weight: bold;
-      color: green;
-      font-size: 1.5em;
-    }
-  </style>
+        .setup-info {
+            margin-bottom: 1em;
+        }
+        .setup-info-title {
+            font-weight: bold;
+            margin-right: 0.5em;
+        }
+
+        /* Animation for dots */
+        @keyframes dot {
+            0% { content: "."; }
+            33% { content: ".."; }
+            66% { content: "..."; }
+            100% { content: "."; }
+        }
+
+        /* IP address list styling */
+        #setup-ip-list {
+            list-style: none;
+            padding-left: 1em;
+            margin: 0.5em 0;
+        }
+        #setup-ip-list li {
+            margin: 0.3em 0;
+            font-family: monospace;
+        }
+
+        #wifi-animation::after {
+            content: ".";
+            animation: dot 1s steps(4) infinite;
+        }
+
+        #wifi-completed {
+            font-weight: bold;
+            color: green;
+            font-size: 1.5em;
+        }
+
+        /* Raw data display styles */
+        #raw-data-display {
+            font-family: monospace;
+            font-size: 0.9em;
+            white-space: pre-wrap;
+            margin-top: 1em;
+            padding: 1em;
+        }
+    </style>
 </head>
 <body
-  data-debug-mode="{{ debug_mode|tojson }}"
-  data-reset-secs="{{ scan_reset_seconds|tojson }}"
-  data-inactivity-ms="{{ scan_inactivity_ms|tojson }}"
+    data-debug-mode="{{ debug_mode|tojson }}"
+    data-reset-secs="{{ scan_reset_seconds|tojson }}"
+    data-inactivity-ms="{{ scan_inactivity_ms|tojson }}"
 >
-  <!-- Normal Mode Header -->
-  <div id="normal-header" class="header-section">
-    <h1 id="current-date"></h1>
-    <h2 id="twenty-one-date"></h2>
-  </div>
-
-  <!-- Setup Mode Header (hidden by default) -->
-  <div id="setup-header" class="header-section hidden">
-    <h1>SETUP MODE</h1>
-  </div>
-
-  <div id="content">
-    <input type="text" id="scanner-input" autocomplete="off">
-    
-    <!-- Normal Mode Content -->
-    <div id="normal-content">
-      <p class="result-text" id="name-display"></p>
-      <p class="result-text" id="address-display"></p>
-      <p class="result-text" id="dob-display"></p>
-      <p class="result-text" id="expiration-display"></p>
-      <p class="result-text" id="raw-data-display" style="white-space: pre-wrap;"></p>
-      <p class="validation-message" id="validation-message"></p>
+    <!-- Normal Mode Header -->
+    <div id="normal-header" class="header-section">
+        <h1 id="current-date"></h1>
+        <h2 id="twenty-one-date"></h2>
     </div>
 
-    <!-- Setup Mode Content (hidden by default) -->
-    <div id="setup-content" class="hidden">
-      <!-- Example placeholders for system info, IP addresses, etc. -->
-      <div class="setup-info">
-        <span class="setup-info-title">System Name:</span>
-        <span id="setup-system-name"></span>
-      </div>
-      <div class="setup-info">
-        <span class="setup-info-title">Pi Model:</span>
-        <span id="setup-pi-model"></span>
-      </div>
-      <div class="setup-info">
-        <span class="setup-info-title">CPU Serial:</span>
-        <span id="setup-cpu-id"></span>
-      </div>
-      <div class="setup-info">
-        <span class="setup-info-title">Registered User:</span>
-        <span id="setup-registered-user"></span>
-      </div>
-      <div class="setup-info">
-        <span class="setup-info-title">Company Name:</span>
-        <span id="setup-company-name"></span>
-      </div>
-      <div class="setup-info">
-        <span class="setup-info-title">Location:</span>
-        <span id="setup-location"></span>
-      </div>
-      <div class="setup-info">
-        <span class="setup-info-title">Display Serial:</span>
-        <span id="setup-display-serial"></span>
-      </div>
-      <div class="setup-info">
-        <span class="setup-info-title">IP Addresses:</span>
-        <ul id="setup-ip-list" style="margin: 0.5em 0 0 1em;"></ul>
-      </div>
-
-      <!-- Wi-Fi Configuration Status -->
-      <div class="setup-info">
-        <span class="setup-info-title">Wi-Fi Configuration Status:</span>
-        <span id="setup-wifi-status"></span>
-      </div>
-
-      <!-- Configuring Animation -->
-      <div class="setup-info hidden" id="wifi-configuring">
-        <span class="setup-info-title">Configuring WIFI</span>
-        <span id="wifi-animation"></span>
-      </div>
-
-      <!-- Completed Message -->
-      <div class="setup-info hidden" id="wifi-completed">
-        <span class="setup-info-title">COMPLETED</span>
-      </div>
-
-      <!-- Optional: Instructions or additional messages -->
-      <p class="validation-message" id="setup-message"></p>
+    <!-- Setup Mode Header -->
+    <div id="setup-header" class="header-section hidden">
+        <h1>SETUP MODE</h1>
     </div>
-  </div>
 
-  <script>
-    const debugMode = (document.body.dataset.debugMode === "true");
-    const resetSecs = parseInt(document.body.dataset.resetSecs || "15", 10);
-    const inactivityMs = parseInt(document.body.dataset.inactivityMs || "300", 10);
+    <div id="content">
+        <input type="text" id="scanner-input" autocomplete="off">
 
-    // Track whether we are in Setup Mode. Start with false.
-    let currentSetupMode = false;
+        <!-- Normal Mode Content -->
+        <div id="normal-content">
+            <p class="result-text" id="name-display"></p>
+            <p class="result-text" id="address-display"></p>
+            <p class="result-text" id="dob-display"></p>
+            <p class="result-text" id="issue-date-display"></p>
+            <p class="result-text" id="expiration-display"></p>
+            <p class="result-text" id="raw-data-display" style="white-space: pre-wrap;"></p>
+            <p class="validation-message" id="validation-message"></p>
+        </div>
 
-    function updateDate() {
-      const now = new Date();
-      const opts = { year: 'numeric', month: 'long', day: 'numeric' };
-      document.getElementById('current-date').textContent =
-        "Current Date: " + now.toLocaleDateString('en-US', opts);
+        <!-- Setup Mode Content -->
+        <div id="setup-content" class="hidden">
+            <div class="setup-info">
+                <span class="setup-info-title">System Name:</span>
+                <span id="setup-system-name"></span>
+            </div>
+            <div class="setup-info">
+                <span class="setup-info-title">Registered User:</span>
+                <span id="setup-registered-user"></span>
+            </div>
+            <div class="setup-info">
+                <span class="setup-info-title">Company Name:</span>
+                <span id="setup-company-name"></span>
+            </div>
+            <div class="setup-info">
+                <span class="setup-info-title">Location:</span>
+                <span id="setup-location"></span>
+            </div>
+            <div class="setup-info">
+                <span class="setup-info-title">Display Serial:</span>
+                <span id="setup-display-serial"></span>
+            </div>
+            <div class="setup-info">
+                <span class="setup-info-title">CPU ID:</span>
+                <span id="setup-cpu-id"></span>
+            </div>
+            <div class="setup-info">
+                <span class="setup-info-title">IP Addresses:</span>
+                <ul id="setup-ip-list"></ul>
+            </div>
+            <div class="setup-info">
+                <span class="setup-info-title">Wi-Fi Configuration Status:</span>
+                <span id="setup-wifi-status"></span>
+            </div>
+            <div class="setup-info hidden" id="wifi-configuring">
+                <span class="setup-info-title">Configuring WIFI</span>
+                <span id="wifi-animation"></span>
+            </div>
+            <div class="setup-info hidden" id="wifi-completed">
+                <span class="setup-info-title">COMPLETED</span>
+            </div>
+            <p class="validation-message" id="setup-message"></p>
+        </div>
+    </div>
 
-      const cutoff = new Date(now);
-      cutoff.setFullYear(now.getFullYear() - 21);
-      document.getElementById('twenty-one-date').textContent =
-        "Must be born before " + cutoff.toLocaleDateString('en-US', opts) + " to be 21+";
-    }
-    updateDate();
-    setInterval(updateDate, 60000);
+    <script>
+        // Get configuration from data attributes
+        const debugMode = (document.body.dataset.debugMode === "true");
+        const resetSecs = parseInt(document.body.dataset.resetSecs || "15", 10);
+        const inactivityMs = parseInt(document.body.dataset.inactivityMs || "300", 10);
 
-    // Input capturing
-    const inputField = document.getElementById('scanner-input');
-    inputField.focus();
-    document.addEventListener('click', () => inputField.focus());
+        // State tracking
+        let currentSetupMode = false;
+        let scanBuffer = '';
+        let scanTimeout = null;
+        let scanning = false;
+        let resetTimer = null;
+        let AWAITING_WIFI_CONFIG = false;
 
-    let scanBuffer = '';
-    let scanTimeout = null;
-    let scanning = false;
-    let resetTimer = null;
+        // Initialize date display
+        function updateDate() {
+            const now = new Date();
+            const opts = { year: 'numeric', month: 'long', day: 'numeric' };
+            document.getElementById('current-date').textContent =
+                "Current Date: " + now.toLocaleDateString('en-US', opts);
 
-    inputField.addEventListener('input', (e) => {
-      if (!scanning) {
-        scanning = true;
-        showReadingMessage();
-      }
+            const cutoff = new Date(now);
+            cutoff.setFullYear(now.getFullYear() - 21);
+            document.getElementById('twenty-one-date').textContent =
+                "Must be born before " + cutoff.toLocaleDateString('en-US', opts) + " to be 21+";
+        }
+        updateDate();
+        setInterval(updateDate, 60000);
 
-      scanBuffer += e.target.value;
-      inputField.value = '';
+        // Input handling
+        const inputField = document.getElementById('scanner-input');
+        inputField.focus();
+        document.addEventListener('click', () => inputField.focus());
 
-      clearTimeout(scanTimeout);
-      scanTimeout = setTimeout(() => {
-        finalizeScan(scanBuffer.trim());
-        scanBuffer = '';
-        scanning = false;
-      }, inactivityMs);
-    });
+        inputField.addEventListener('input', (e) => {
+            if (!scanning) {
+                scanning = true;
+                showReadingMessage();
+            }
 
-    function showReadingMessage() {
-      // Only show "Reading scanning data..." if in normal mode
-      if (!currentSetupMode) {
-        const vm = document.getElementById('validation-message');
-        vm.textContent = "Reading scanning data...";
-      }
-    }
+            scanBuffer += e.target.value;
+            inputField.value = '';
 
-    async function finalizeScan(finalData) {
-      if(!finalData) {
-        hideReadingMessage();
-        return;
-      }
-      try {
-        // If awaiting Wi-Fi config, show configuring message before sending request
-        if (AWAITING_WIFI_CONFIG) {
-          showConfiguringWifi();
+            clearTimeout(scanTimeout);
+            scanTimeout = setTimeout(() => {
+                finalizeScan(scanBuffer.trim());
+                scanBuffer = '';
+                scanning = false;
+            }, inactivityMs);
+        });
+
+        function showReadingMessage() {
+            if (!currentSetupMode) {
+                const vm = document.getElementById('validation-message');
+                vm.textContent = "Reading scanning data...";
+            }
         }
 
-        const resp = await fetch('/process_scan', {
-          method: 'POST',
-          headers: { 'Content-Type':'application/json' },
-          body: JSON.stringify({ scan_data: finalData })
-        });
-        const result = await resp.json();
-        updateDisplay(result);
-      } catch(err) {
-        console.error('Error finalizing scan:', err);
-        showError('Error finalizing scan data');
-      }
-    }
+        async function finalizeScan(finalData) {
+            if (!finalData) {
+                hideReadingMessage();
+                return;
+            }
 
-    function updateDisplay(result) {
-      // If the server says we're in Setup Mode
-      if (result.setup_mode === true) {
-        currentSetupMode = true;
-        showSetupMode(result);
-        return;
-      }
+            try {
+                if (AWAITING_WIFI_CONFIG) {
+                    showConfiguringWifi();
+                }
 
-      // If the server says we've returned to normal mode
-      if (result.setup_mode === false) {
-        currentSetupMode = false;
-        showNormalMode();
-        // We continue after here to see if there's an error or success message
-      }
+                const resp = await fetch('/process_scan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ scan_data: finalData })
+                });
 
-      // For normal scanning results:
-      hideReadingMessage();
+                if (!resp.ok) {
+                    throw new Error(`HTTP error! status: ${resp.status}`);
+                }
 
-      if(!result.success) {
-        // Show parse error
-        const nc = document.getElementById('normal-content');
-        nc.className = 'invalid';
-        document.getElementById('name-display').textContent        = "";
-        document.getElementById('address-display').textContent     = "";
-        document.getElementById('dob-display').textContent         = "";
-        document.getElementById('expiration-display').textContent  = "";
-        document.getElementById('validation-message').textContent  = result.error || "Error parsing data";
-        return;
-      }
-
-      // Check if it's a Wi-Fi configuration success
-      if (currentSetupMode && result.message && result.message.startsWith("Wi-Fi")) {
-        // Hide configuring message and show completed message
-        showCompletedMessage();
-        return;
-      }
-
-      // success => final parse in normal mode
-      const nc = document.getElementById('normal-content');
-      nc.className = result.is_valid ? 'valid' : 'invalid';
-
-      document.getElementById('name-display').textContent        = "Name: " + (result.name || "");
-      document.getElementById('address-display').textContent     = "Address: " + (result.address || "");
-      document.getElementById('dob-display').textContent         = "Date of Birth: " + (result.dob || "");
-      document.getElementById('expiration-display').textContent  = "License Expiration: " + (result.expiration || "");
-      document.getElementById('validation-message').textContent  = result.validation_message || "";
-
-      // Only auto-clear if we're still in normal mode
-      if (!currentSetupMode && resetSecs > 0) {
-        clearTimeout(resetTimer);
-        resetTimer = setTimeout(clearScreen, resetSecs * 1000);
-      }
-    }
-
-    // Switch to Setup Mode UI
-    function showSetupMode(result) {
-      // Hide normal header & content
-      document.getElementById('normal-header').classList.add('hidden');
-      document.getElementById('normal-content').classList.add('hidden');
-      // Show setup header & content
-      document.getElementById('setup-header').classList.remove('hidden');
-      document.getElementById('setup-content').classList.remove('hidden');
-
-      // Fill in the placeholders
-      document.getElementById('setup-system-name').textContent   = result.system_name || "";
-      document.getElementById('setup-pi-model').textContent      = result.pi_model || "Unknown";
-      document.getElementById('setup-cpu-id').textContent        = result.cpu_unique_id || "Unknown";
-      document.getElementById('setup-registered-user').textContent = result.registered_user || "N/A";
-      document.getElementById('setup-company-name').textContent  = result.company_name || "N/A";
-      document.getElementById('setup-location').textContent      = result.location || "N/A";
-      document.getElementById('setup-display-serial').textContent = result.display_serial || "N/A";
-
-      // IP addresses
-      const ipList = document.getElementById('setup-ip-list');
-      ipList.innerHTML = "";
-      if (result.ips) {
-        Object.keys(result.ips).forEach(iface => {
-          const li = document.createElement('li');
-          li.textContent = iface + ": " + result.ips[iface];
-          ipList.appendChild(li);
-        });
-      }
-
-      // Wi-Fi Configuration Status
-      const wifiStatus = document.getElementById('setup-wifi-status');
-      if (result.message && result.message.startsWith("Wi-Fi")) {
-        const isSuccess = result.success;
-        wifiStatus.textContent = result.message;
-        wifiStatus.style.color = isSuccess ? "green" : "red";
-      } else {
-        wifiStatus.textContent = "";
-      }
-
-      // Display any setup messages
-      document.getElementById('setup-message').textContent = result.message || "";
-    }
-
-    // Switch back to Normal Mode UI
-    function showNormalMode() {
-      // Show normal header/content
-      document.getElementById('normal-header').classList.remove('hidden');
-      document.getElementById('normal-content').classList.remove('hidden');
-      // Hide setup header/content
-      document.getElementById('setup-header').classList.add('hidden');
-      document.getElementById('setup-content').classList.add('hidden');
-
-      // Clear any leftover messages in the setup pane if needed
-      document.getElementById('setup-message').textContent = "";
-      document.getElementById('setup-wifi-status').textContent = "";
-    }
-
-    function hideReadingMessage() {
-      if (!currentSetupMode) {
-        const vm = document.getElementById('validation-message');
-        if (vm.textContent === "Reading scanning data...") {
-          vm.textContent = "";
+                const result = await resp.json();
+                updateDisplay(result);
+            } catch (err) {
+                console.error('Error finalizing scan:', err);
+                showError(err.message || 'Error finalizing scan data');
+            }
         }
-      }
-    }
 
-    function showError(msg) {
-      if (currentSetupMode) {
-        // In setup mode, show error in Wi-Fi status
-        const wifiStatus = document.getElementById('setup-wifi-status');
-        wifiStatus.textContent = "ERROR: " + msg;
-        wifiStatus.style.color = "red";
-      } else {
-        // Show parse error in normal mode
-        const nc = document.getElementById('normal-content');
-        nc.className = 'invalid';
-        document.getElementById('name-display').textContent        = "";
-        document.getElementById('address-display').textContent     = "";
-        document.getElementById('dob-display').textContent         = "";
-        document.getElementById('expiration-display').textContent  = "";
-        document.getElementById('validation-message').textContent  = "ERROR: " + msg;
-      }
-    }
+        function updateDisplay(result) {
+            // Check if we need to reload the page
+            if (result.needs_reload) {
+                document.getElementById('setup-message').textContent = 'Restarting application...';
+                // Wait a moment for the backend to restart
+                setTimeout(() => {
+                    // Try to reload, with exponential backoff
+                    tryReload(1);
+                }, 2000);
+                return;
+            }
 
-    function showWifiStatus(message, isError=false) {
-      const wifiStatus = document.getElementById('setup-wifi-status');
-      wifiStatus.textContent = message;
-      wifiStatus.style.color = isError ? "red" : "green";
-    }
+            // Handle setup mode transitions
+            if (result.setup_mode === true) {
+                currentSetupMode = true;
+                showSetupMode(result);
+                return;
+            }
 
-    function showConfiguringWifi() {
-      const wifiStatus = document.getElementById('setup-wifi-status');
-      const configuringDiv = document.getElementById('wifi-configuring');
-      const completedDiv = document.getElementById('wifi-completed');
+            if (result.setup_mode === false) {
+                currentSetupMode = false;
+                showNormalMode();
+                return;
+            }
 
-      // Hide previous messages
-      wifiStatus.textContent = "";
-      completedDiv.classList.add('hidden');
+            // Handle normal scanning results
+            hideReadingMessage();
 
-      // Show configuring message
-      configuringDiv.classList.remove('hidden');
-      wifiStatus.textContent = "Configuring WIFI";
+            if (!result.success) {
+                showError(result.error || 'Error processing scan');
+                return;
+            }
 
-      // Optionally, disable input during configuration
-      inputField.disabled = true;
-    }
+            // Handle Wi-Fi configuration success
+            if (currentSetupMode && result.message && result.message.startsWith("Wi-Fi")) {
+                showCompletedMessage();
+                return;
+            }
 
-    function showCompletedMessage() {
-      const configuringDiv = document.getElementById('wifi-configuring');
-      const completedDiv = document.getElementById('wifi-completed');
+            const nc = document.getElementById('normal-content');
+            nc.className = result.is_valid ? 'valid' : 'invalid';
 
-      // Hide configuring message
-      configuringDiv.classList.add('hidden');
+            document.getElementById('name-display').textContent = "Name: " + (result.name || "");
+            document.getElementById('address-display').textContent = "Address: " + (result.address || "");
+            document.getElementById('dob-display').textContent = "Date of Birth: " + (result.dob || "");
+            document.getElementById('issue-date-display').textContent = "Issue Date: " + (result.issue_date || "");
+            document.getElementById('expiration-display').textContent = "License Expiration: " + (result.expiration || "");
+            document.getElementById('validation-message').textContent = result.validation_message || "";
 
-      // Show completed message
-      completedDiv.classList.remove('hidden');
+            // Show raw data in debug mode
+            if (debugMode) {
+                document.getElementById('raw-data-display').textContent = result.raw_data || "";
+            }
 
-      // Show "COMPLETED" for 1 second, then hide and return to setup screen
-      setTimeout(() => {
-        completedDiv.classList.add('hidden');
-        // Re-enable input
-        inputField.disabled = false;
-      }, 1000);
-    }
+            if (!currentSetupMode && resetSecs > 0) {
+                clearTimeout(resetTimer);
+                resetTimer = setTimeout(clearScreen, resetSecs * 1000);
+            }
+        }
 
-    function clearScreen() {
-      // Only applies to normal mode
-      const nc = document.getElementById('normal-content');
-      nc.className = "";
-      document.getElementById('name-display').textContent        = "";
-      document.getElementById('address-display').textContent     = "";
-      document.getElementById('dob-display').textContent         = "";
-      document.getElementById('expiration-display').textContent  = "";
-      document.getElementById('validation-message').textContent  = "";
-    }
+        function showSetupMode(result) {
+            // Hide normal mode elements
+            document.getElementById('normal-header').classList.add('hidden');
+            document.getElementById('normal-content').classList.add('hidden');
 
-    // Modify updateDisplay to handle Wi-Fi configuration completion
-    function updateDisplay(result) {
-      // If the server says we're in Setup Mode
-      if (result.setup_mode === true) {
-        currentSetupMode = true;
-        showSetupMode(result);
-        return;
-      }
+            // Show setup mode elements
+            document.getElementById('setup-header').classList.remove('hidden');
+            document.getElementById('setup-content').classList.remove('hidden');
 
-      // If the server says we've returned to normal mode
-      if (result.setup_mode === false) {
-        currentSetupMode = false;
-        showNormalMode();
-        // We continue after here to see if there's an error or success message
-      }
+            // Update setup information
+            document.getElementById('setup-system-name').textContent = result.system_name || 'N/A';
+            document.getElementById('setup-registered-user').textContent = result.registered_user || 'N/A';
+            document.getElementById('setup-company-name').textContent = result.company_name || 'N/A';
+            document.getElementById('setup-location').textContent = result.location || 'N/A';
+            document.getElementById('setup-display-serial').textContent = result.display_serial || 'N/A';
+            document.getElementById('setup-cpu-id').textContent = result.cpu_unique_id || 'N/A';
 
-      // For normal scanning results:
-      hideReadingMessage();
+            // Update IP addresses
+            const ipList = document.getElementById('setup-ip-list');
+            ipList.innerHTML = '';
+            if (result.ips) {
+                Object.entries(result.ips).forEach(([iface, ip]) => {
+                    const li = document.createElement('li');
+                    li.textContent = `${iface}: ${ip}`;
+                    ipList.appendChild(li);
+                });
+            }
 
-      if(!result.success) {
-        // Show parse error
-        const nc = document.getElementById('normal-content');
-        nc.className = 'invalid';
-        document.getElementById('name-display').textContent        = "";
-        document.getElementById('address-display').textContent     = "";
-        document.getElementById('dob-display').textContent         = "";
-        document.getElementById('expiration-display').textContent  = "";
-        document.getElementById('validation-message').textContent  = result.error || "Error parsing data";
-        return;
-      }
+            document.getElementById('setup-message').textContent = result.message || '';
+        }
 
-      // Check if it's a Wi-Fi configuration success
-      if (currentSetupMode && result.message && result.message.startsWith("Wi-Fi")) {
-        // Show completed message
-        showCompletedMessage();
-        return;
-      }
+        function showNormalMode() {
+            // Show normal mode elements
+            document.getElementById('normal-header').classList.remove('hidden');
+            document.getElementById('normal-content').classList.remove('hidden');
 
-      // success => final parse in normal mode
-      const nc = document.getElementById('normal-content');
-      nc.className = result.is_valid ? 'valid' : 'invalid';
+            // Hide setup mode elements
+            document.getElementById('setup-header').classList.add('hidden');
+            document.getElementById('setup-content').classList.add('hidden');
 
-      document.getElementById('name-display').textContent        = "Name: " + (result.name || "");
-      document.getElementById('address-display').textContent     = "Address: " + (result.address || "");
-      document.getElementById('dob-display').textContent         = "Date of Birth: " + (result.dob || "");
-      document.getElementById('expiration-display').textContent  = "License Expiration: " + (result.expiration || "");
-      document.getElementById('validation-message').textContent  = result.validation_message || "";
+            clearScreen();
+        }
 
-      // Only auto-clear if we're still in normal mode
-      if (!currentSetupMode && resetSecs > 0) {
-        clearTimeout(resetTimer);
-        resetTimer = setTimeout(clearScreen, resetSecs * 1000);
-      }
-    }
-  </script>
+        function hideReadingMessage() {
+            if (!currentSetupMode) {
+                const vm = document.getElementById('validation-message');
+                if (vm.textContent === "Reading scanning data...") {
+                    vm.textContent = "";
+                }
+            }
+        }
+
+        function showError(msg) {
+            if (currentSetupMode) {
+                document.getElementById('setup-message').textContent = "ERROR: " + msg;
+            } else {
+                const nc = document.getElementById('normal-content');
+                nc.className = 'invalid';
+                clearFields();
+                document.getElementById('validation-message').textContent = "ERROR: " + msg;
+            }
+        }
+
+        function showConfiguringWifi() {
+            const wifiStatus = document.getElementById('setup-wifi-status');
+            const configuringDiv = document.getElementById('wifi-configuring');
+            const completedDiv = document.getElementById('wifi-completed');
+
+            wifiStatus.textContent = "";
+            completedDiv.classList.add('hidden');
+            configuringDiv.classList.remove('hidden');
+            inputField.disabled = true;
+        }
+
+        function showCompletedMessage() {
+            const configuringDiv = document.getElementById('wifi-configuring');
+            const completedDiv = document.getElementById('wifi-completed');
+
+            configuringDiv.classList.add('hidden');
+            completedDiv.classList.remove('hidden');
+
+            setTimeout(() => {
+                completedDiv.classList.add('hidden');
+                inputField.disabled = false;
+                AWAITING_WIFI_CONFIG = false;
+            }, 1000);
+        }
+
+        function clearScreen() {
+            const nc = document.getElementById('normal-content');
+            nc.className = '';
+            clearFields();
+        }
+
+        function clearFields() {
+            document.getElementById('name-display').textContent = "";
+            document.getElementById('address-display').textContent = "";
+            document.getElementById('dob-display').textContent = "";
+            document.getElementById('issue-date-display').textContent = "";
+            document.getElementById('expiration-display').textContent = "";
+            document.getElementById('validation-message').textContent = "";
+            document.getElementById('raw-data-display').textContent = "";
+        }
+
+        function tryReload(attempt) {
+            const maxAttempts = 5;
+            const baseDelay = 1000; // 1 second
+
+            fetch('/').then(response => {
+                if (response.ok) {
+                    window.location.reload();
+                } else {
+                    throw new Error('Server not ready');
+                }
+            }).catch(error => {
+                if (attempt < maxAttempts) {
+                    // Exponential backoff
+                    const delay = baseDelay * Math.pow(2, attempt - 1);
+                    document.getElementById('setup-message').textContent = 
+                        `Waiting for server... (attempt ${attempt}/${maxAttempts})`;
+                    setTimeout(() => tryReload(attempt + 1), delay);
+                } else {
+                    document.getElementById('setup-message').textContent = 
+                        'Server restart failed. Please refresh manually.';
+                }
+            });
+        }
+    </script>
 </body>
 </html>
-
