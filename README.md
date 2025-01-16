@@ -59,6 +59,7 @@ Python dependencies are managed via `pip` and specified in `requirements.txt`:
 Flask==2.2.5
 gunicorn==20.1.0
 requests==2.28.1
+python-dotenv==0.21.1
 ```
 
 ---
