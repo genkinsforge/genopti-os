@@ -35,13 +35,12 @@ xset s noblank
 # --test-type:    suppress warnings about missing security features
 /usr/bin/chromium-browser \
   --kiosk \
-  --incognito \
   --noerrdialogs \
   --disable-infobars \
   --autoplay-policy=no-user-gesture-required \
   --start-fullscreen \
   --test-type \
-  "$KIOSK_URL"
+  "http://localhost:5000"
 EOF
 
 chmod +x "$LAUNCH_SCRIPT"
