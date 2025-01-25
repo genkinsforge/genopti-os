@@ -12,6 +12,7 @@ SERVICE_NAME="genopti-os"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 REQUIREMENTS_FILE="$APP_DIR/requirements.txt"
 APP_SCRIPT="$APP_DIR/app.py"
+SUDOERS_FILE="/etc/sudoers.d/${SERVICE_NAME}"
 
 # Default Environment Variable Values
 DEFAULT_DEBUG_MODE="0"            # 0=normal mode, 1=debug
@@ -71,6 +72,16 @@ echo "Setting ownership of $APP_DIR to $SERVICE_USER:$SERVICE_GROUP..."
 chown -R "$SERVICE_USER":"$SERVICE_GROUP" "$APP_DIR"
 chmod -R 750 "$APP_DIR"
 
+# --[ Allow specific sudo command for service user ]--------------------------
+echo "Configuring sudoers file to allow $SERVICE_USER to execute wpa_cli without password..."
+cat > "$SUDOERS_FILE" <<EOL
+# Allow $SERVICE_USER to run wpa_cli without a password
+$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/wpa_cli -i wlan0 reconfigure
+EOL
+
+# Ensure correct permissions for the sudoers file
+chmod 440 "$SUDOERS_FILE"
+
 # --[ Create or update systemd service file ]---------------------------------
 echo "Setting up systemd service at $SERVICE_FILE..."
 
@@ -120,4 +131,3 @@ systemctl status "$SERVICE_NAME".service || true
 
 echo "$SERVICE_NAME installed and started successfully under user '$SERVICE_USER'."
 echo "Default ENV Vars: DEBUG_MODE=${DEFAULT_DEBUG_MODE}, SCAN_RESET_SECONDS=${DEFAULT_SCAN_RESET_SECONDS}, SCAN_INACTIVITY_MS=${DEFAULT_SCAN_INACTIVITY_MS}"
-
