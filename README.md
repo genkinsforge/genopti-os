@@ -1,8 +1,6 @@
-# Genopti-OS
+# Genopti-OS (v0.31)
 
 **Genopti-OS** is a Raspberry Pi-based customizable operating system enhancement. It provides a streamlined environment for automated license scanning, validation, and a kiosk-style web interface. Designed for simplicity and reliability, it is perfect for applications such as age verification and document validation in public or private settings.
-
----
 
 ## Table of Contents
 
@@ -12,57 +10,57 @@
 - [Software Prerequisites](#software-prerequisites)
 - [Installation](#installation)
 - [Usage Instructions](#usage-instructions)
+- [Setup Mode](#setup-mode)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
 - [License](#license)
-
----
 
 ## About
 
 Genopti-OS simplifies the deployment of license validation systems by integrating hardware and software into a seamless user experience. It leverages the American Association of Motor Vehicle Administrators (AAMVA) standards for license scanning and validation, making it ideal for use cases requiring compliance, such as age verification for alcohol purchases, entry to restricted areas, or identity validation.
 
----
-
 ## Features
 
-- **AAMVA-Compliant License Parsing**: Supports AAMVA-compliant barcode scanning and parsing to extract critical details like name, address, date of birth, and expiration date.
-- **Validation Engine**: Automatically checks age and license expiration.
-- **Flask-Based Web Interface**: Provides an intuitive, user-friendly web interface for real-time scanning results.
-- **Kiosk Mode**: Configurable Chromium kiosk mode for a clean, dedicated interface.
-- **Automated Setup**: Includes shell scripts for quick environment setup and deployment.
-- **Extensive Logging**: Logs key events and debugging information for troubleshooting.
-
----
+- **AAMVA-Compliant License Parsing**: 
+  - Extracts fields including first name, middle name, last name, address, city, date of birth, expiration date, and issue date
+  - Validates age requirements (default: 21 years) and license expiration
+  - Provides formatted validation messages for underage and expired licenses
+- **Flask-Based Web Interface**: 
+  - Real-time scanning results
+  - Configurable scan reset (15 seconds default)
+  - Inactivity timeout (300ms default)
+- **Setup Mode**: 
+  - Serial number configuration
+  - Wi-Fi configuration with WPA/WPA2 support
+  - SSH and VNC service management
+  - System information display (IP addresses, system name, CPU ID)
+- **Extensive Logging**:
+  - Rotating log files with 100KB size limit
+  - 5 backup files maintained
+  - Configurable debug mode via environment variables
+  - Detailed error tracking and reporting
 
 ## Hardware Requirements
 
 The following hardware components are tested and recommended:
 
-1. **Raspberry Pi 3B or Higher**: Minimum 2GB RAM.
-2. **Netum L8 Wireless 1D/2D Barcode Scanner**: For license scanning.
+1. **Raspberry Pi 3B or Higher**: Minimum 1GB RAM.
+2. **Netum L8 Wireless 1D/2D Barcode Scanner** or **Tera HW0009 Barcode Scanner Wireless with Screen**: For license scanning.
 3. **HMTECH 7" Mini HDMI Monitor**:
    - Part Number: HCTG070V.PK91.
    - Includes necessary cables.
-4. **Dedicated USB Wall Adapter**: Ensure sufficient power supply (e.g., Toast printers may not provide enough power).
-
----
+4. **Dedicated USB Wall Adapter**: Ensure sufficient power supply.
 
 ## Software Prerequisites
 
-- **Operating System**: Raspberry Pi OS (Debian-based).
-- **Python**: Version 3.7 or later.
-- **Browser**: Chromium for kiosk functionality.
-
-Python dependencies are managed via `pip` and specified in `requirements.txt`:
-```plaintext
-Flask==2.2.5
-gunicorn==20.1.0
-requests==2.28.1
-python-dotenv==0.21.1
-```
-
----
+- **Operating System**: Raspberry Pi OS (Debian-based)
+- **Python**: Version 3.7 or later
+- **Browser**: Chromium for kiosk functionality
+- **Required Python Packages**:
+  - Flask==2.2.5
+  - gunicorn==20.1.0
+  - requests==2.28.1
+  - python-dotenv==0.21.1
 
 ## Installation
 
@@ -80,82 +78,81 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Step 3: Set Up the Environment
-Run the setup scripts for services and the kiosk UI:
+### Step 3: Environment Configuration
+1. Create a `.env` file in the application directory
+2. Set `DEBUG_MODE=1` for development (optional)
+3. Configure `DISPLAY_SERIAL` if needed (automatically uses CPU serial if not set)
 
-#### License Scanner Service
+### Step 4: Set Up Services
+Run the installation scripts:
 ```bash
 sudo ./install_genopti-os.sh
-```
-This script:
-- Creates a dedicated system user.
-- Sets up the application directory at `/opt/genopti-os`.
-- Configures and enables a systemd service for the application.
-
-#### Kiosk UI Setup
-```bash
 ./ui_setup.sh
 ```
-This sets up Chromium to launch in kiosk mode on startup.
 
----
+## Setup Mode Commands
+
+Access setup mode by scanning `$$setup$$`. Available commands:
+
+1. **Serial Number Configuration**:
+   ```
+   $$serialnumber$${"serial": "suffix"}
+   ```
+
+2. **Wi-Fi Configuration**:
+   ```
+   $$wifi$${"ssid": "networkName", "password": "pass", "country": "US", "encryption": "WPA", "hidden": false}
+   ```
+
+3. **Service Management**:
+   - Enable SSH: `$$enablessh$$`
+   - Disable SSH: `$$disablessh$$`
+   - Enable VNC: `$$enablevnc$$`
+   - Disable VNC: `$$disablevnc$$`
+
+4. **Application Control**:
+   - Restart Application: `$$restartapp$$`
+   - Exit Setup Mode: `$$exit$$`
 
 ## Usage Instructions
 
 ### Launch the Service
-Start the license scanner service:
 ```bash
 sudo systemctl start genopti-os.service
 ```
-Verify its status:
+
+### Monitor Service Status
 ```bash
 sudo systemctl status genopti-os.service
 ```
 
-### Access the Web Interface
-Open a browser and navigate to:
+### Access Web Interface
 ```
 http://localhost:5000
 ```
-If kiosk mode is enabled, the interface will launch automatically on boot.
-
-### Scan and Validate Licenses
-- Place the barcode scanner over the license to input data.
-- The system validates:
-  - **Date of Birth**: Ensures the individual meets the age requirement (default: 21 years).
-  - **Expiration Date**: Checks license validity.
-- Results, including name, address, and validation status, are displayed on the interface.
-
----
 
 ## Troubleshooting
 
-### Logs
-View logs for debugging:
-```bash
-tail -f logs/scanner.log
-```
+### Log Locations
+- Main log file: `logs/scanner.log`
+- Maximum log size: 100KB
+- Rotates after reaching size limit
+- Keeps 5 backup files
 
-### Restart the Service
-To restart the service:
-```bash
-sudo systemctl restart genopti-os.service
-```
+### Debug Mode
+Set `DEBUG_MODE=1` in `.env` file for verbose logging.
 
 ### Common Issues
-1. **Kiosk Mode Not Launching**: Ensure `ui_setup.sh` completed successfully and reboot the system.
-2. **Scanner Not Responding**: Check hardware connections and test with a different USB port.
-
----
+1. **Kiosk Mode Not Launching**: Ensure `ui_setup.sh` completed successfully
+2. **Scanner Not Responding**: Check USB connections
+3. **Wi-Fi Issues**: Verify configuration JSON format
 
 ## Contributing
 
 Contributions are welcome! Please:
-1. Fork the repository.
-2. Create a new branch for your feature or bug fix.
-3. Submit a pull request with detailed changes.
-
----
+1. Fork the repository
+2. Create a new branch for your feature or bug fix
+3. Submit a pull request with detailed changes
 
 ## License
 
@@ -164,5 +161,3 @@ Genopti-OS is licensed under the [GNU General Public License v3.0](LICENSE). Ref
 ---
 
 Genopti-OS is designed and maintained by **Genkins Forge**. For support, feature requests, or reporting issues, contact us or submit a GitHub issue.
-
-
