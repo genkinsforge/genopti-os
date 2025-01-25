@@ -10,6 +10,8 @@ import struct
 import array
 from dotenv import load_dotenv
 import sys
+import json
+import subprocess
 
 app = Flask(__name__)
 
@@ -60,7 +62,7 @@ def load_environment_vars():
     load_dotenv()
     global DISPLAY_SERIAL
     global CPU_UNIQUE_ID
-    
+
     # Load serial from .env if it exists, otherwise get from CPU
     DISPLAY_SERIAL = os.getenv('DISPLAY_SERIAL', 'N/A')
     CPU_UNIQUE_ID = get_raspberry_pi_serial()
@@ -71,26 +73,26 @@ def update_serial_number(suffix):
         # Generate new serial number with suffix
         cpu_serial = get_raspberry_pi_serial()
         new_serial = f"{cpu_serial}{suffix}"
-        
+
         # Update .env file
         env_path = os.path.join(os.path.dirname(__file__), '.env')
-        
+
         # Read existing content
         existing_lines = []
         if os.path.exists(env_path):
             with open(env_path, 'r') as f:
                 existing_lines = f.readlines()
-        
+
         # Filter out DISPLAY_SERIAL line if it exists
         updated_lines = [line for line in existing_lines if not line.startswith('DISPLAY_SERIAL=')]
-        
+
         # Add new serial number
         updated_lines.append(f'DISPLAY_SERIAL={new_serial}\n')
-        
+
         # Write back to file
         with open(env_path, 'w') as f:
             f.writelines(updated_lines)
-            
+
         return True, new_serial
     except Exception as e:
         logging.error(f"Error updating serial number: {str(e)}")
@@ -118,7 +120,7 @@ def get_non_loopback_ips():
     max_possible = 128  # arbitrary upper bound
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     bytes_out = max_possible * 32
-    
+
     names = array.array('B', b'\0' * bytes_out)
     outbytes = struct.unpack('iL', fcntl.ioctl(
         sock.fileno(),
@@ -157,14 +159,14 @@ class LicenseParser:
                 'expiration': re.search(r'DBA(\d{8})', data).group(1),
                 'issue_date': re.search(r'DBD(\d{8})', data).group(1)
             }
-            
+
             # Format dates
             fields['dob'] = datetime.strptime(fields['dob'], '%m%d%Y').date()
             fields['expiration'] = datetime.strptime(fields['expiration'], '%m%d%Y').date()
             fields['issue_date'] = datetime.strptime(fields['issue_date'], '%m%d%Y').date()
-            
+
             return fields
-            
+
         except Exception as e:
             logging.error(f"Error parsing license data: {str(e)}")
             raise ValueError(f"Error parsing license data: {str(e)}")
@@ -175,7 +177,7 @@ class LicenseParser:
         days_old = (today - parsed_data['dob']).days
         age = days_old // 365
         is_expired = parsed_data['expiration'] < today
-        
+
         result = {
             'is_valid': age >= 21 and not is_expired,
             'age': age,
@@ -191,22 +193,21 @@ def get_validation_message(validation_result):
     return "VALID and 21 or Older"
 
 # --------------------------------------------------------------------------
-# 5. Flask Routes
+# 5. Setup & Wi-Fi Configuration Logic
 # --------------------------------------------------------------------------
-@app.route('/')
-def home():
-    """Renders the scanning interface."""
-    return render_template('index.html',
-                         debug_mode=DEBUG_MODE,
-                         scan_reset_seconds=15,
-                         scan_inactivity_ms=300)
-
 def handle_setup_command(scan_str):
-    """Handle setup mode commands"""
+    """
+    Handle various setup commands while in setup mode.
+    e.g. $$serialnumber$${"serial": n2}
+    e.g. $$restartapp$$
+    """
     if scan_str.startswith('$$serialnumber$$'):
         try:
-            # Extract suffix after {serial: }
-            suffix = scan_str.split('{serial: ')[1].rstrip('}')
+            # Expecting JSON after $$serialnumber$$
+            json_str = scan_str.replace('$$serialnumber$$', '', 1).strip()
+            data = json.loads(json_str)
+            suffix = data.get("serial", "")
+
             success, result = update_serial_number(suffix)
             if success:
                 return {
@@ -225,9 +226,9 @@ def handle_setup_command(scan_str):
             return {
                 'success': False,
                 'setup_mode': True,
-                'error': f'Invalid serial number format: {str(e)}'
+                'error': f'Invalid serial number JSON: {str(e)}'
             }
-            
+
     elif scan_str == '$$restartapp$$':
         success, message = restart_application()
         return {
@@ -236,27 +237,87 @@ def handle_setup_command(scan_str):
             'message': message,
             'needs_reload': True
         }
-    
+
     return None
+
+def configure_wifi_json(config: dict):
+    """
+    Takes a Python dict with keys:
+      {
+        "ssid": "clusino",
+        "password": "Vorry-07122020!",
+        "country": "US",
+        "encryption": "WPA",
+        "hidden": false
+      }
+    Writes /etc/wpa_supplicant/wpa_supplicant.conf, sets country code, reconfigures Wi-Fi.
+    Returns (success: bool, message: str).
+    """
+    ssid = config.get('ssid', '')
+    password = config.get('password', '')
+    country = config.get('country', 'US').upper()  # default "US"
+    encryption = config.get('encryption', 'WPA').upper()  # e.g. "WPA", "WEP", "NOPASS"
+    hidden = bool(config.get('hidden', False))
+
+    if not ssid:
+        return (False, "No SSID provided in JSON.")
+
+    wpa_supplicant_path = "/etc/wpa_supplicant/wpa_supplicant.conf"
+
+    # For WPA/WPA2:
+    network_block = f"""
+network={{
+    ssid="{ssid}"
+    scan_ssid={1 if hidden else 0}
+    key_mgmt=WPA-PSK
+    psk="{password}"
+}}
+"""
+
+    try:
+        with open(wpa_supplicant_path, "w") as f:
+            f.write("ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\n")
+            f.write("update_config=1\n")
+            f.write(f"country={country}\n")
+            f.write(network_block)
+    except Exception as e:
+        return (False, f"Error writing wpa_supplicant.conf: {str(e)}")
+
+    # Reconfigure Wi-Fi
+    try:
+        subprocess.run(["sudo", "wpa_cli", "-i", "wlan0", "reconfigure"], check=True)
+    except subprocess.CalledProcessError as cpe:
+        return (False, f"Failed to reconfigure Wi-Fi: {str(cpe)}")
+
+    return (True, f"Wi-Fi configured. SSID: {ssid}, Country: {country}")
+
+# --------------------------------------------------------------------------
+# 6. Flask Routes
+# --------------------------------------------------------------------------
+@app.route('/')
+def home():
+    """Renders the scanning interface."""
+    return render_template('index.html',
+                           debug_mode=DEBUG_MODE,
+                           scan_reset_seconds=15,
+                           scan_inactivity_ms=300)
 
 @app.route('/process_scan', methods=['POST'])
 def process_scan():
     global SETUP_MODE
-    
+
     req_json = request.json or {}
     scan_str = req_json.get('scan_data', '').strip()
     logging.info(f"Received scan: {repr(scan_str)}")
-    
+
     # ----------------------------------------------------------------------
-    # 5.1 Check if we should ENTER Setup Mode
+    # 6.1 Check if we should ENTER Setup Mode
     # ----------------------------------------------------------------------
     if scan_str == '$$setup$$':
         SETUP_MODE = True
         logging.info("SYSTEM: Entered Setup Mode (Open Source).")
-        
-        # Gather IP addresses
+
         ip_info = get_non_loopback_ips()
-        
         return jsonify({
             'success': True,
             'setup_mode': True,
@@ -269,9 +330,9 @@ def process_scan():
             'display_serial': DISPLAY_SERIAL,
             'cpu_unique_id': CPU_UNIQUE_ID,
         })
-    
+
     # ----------------------------------------------------------------------
-    # 5.2 If ALREADY in Setup Mode, handle setup commands
+    # 6.2 If ALREADY in Setup Mode, handle setup commands
     # ----------------------------------------------------------------------
     if SETUP_MODE:
         # Check for exit command first
@@ -284,19 +345,33 @@ def process_scan():
                 'message': 'Exited Setup Mode, normal scanning resumed'
             })
 
-        # Handle other setup commands
+        # Handle known setup commands (serial number, restart, etc.)
         setup_result = handle_setup_command(scan_str)
         if setup_result:
             return jsonify(setup_result)
-            
-        # Handle Wi-Fi configuration QR codes
-        if scan_str.startswith("WIFI:"):
-            wifi_data = scan_str.replace("WIFI:", "", 1).strip()
-            logging.info(f"Wi-Fi config command received: {wifi_data}")
+
+        # -------------------------------------------------
+        # NEW: JSON-based Wi-Fi config command
+        # -------------------------------------------------
+        if scan_str.startswith("$$wifi$$"):
+            # Remove prefix
+            wifi_json_str = scan_str.replace("$$wifi$$", "", 1).strip()
+            try:
+                wifi_config = json.loads(wifi_json_str)
+            except json.JSONDecodeError as e:
+                return jsonify({
+                    'success': False,
+                    'setup_mode': True,
+                    'error': f"Invalid Wi-Fi JSON: {str(e)}"
+                })
+
+            success, message = configure_wifi_json(wifi_config)
+            logging.info(f"Wi-Fi config JSON parsed. Result: {message}")
+
             return jsonify({
-                'success': True,
+                'success': success,
                 'setup_mode': True,
-                'message': f'Wi-Fi configuration received',
+                'message': message,
                 'ips': get_non_loopback_ips(),
                 'system_name': APP_NAME_VERSION,
                 'registered_user': REGISTERED_USER,
@@ -305,8 +380,8 @@ def process_scan():
                 'display_serial': DISPLAY_SERIAL,
                 'cpu_unique_id': CPU_UNIQUE_ID
             })
-            
-        # Return updated system info for any other setup commands
+
+        # If it's some other setup command we haven't handled
         return jsonify({
             'success': True,
             'setup_mode': True,
@@ -321,7 +396,7 @@ def process_scan():
         })
 
     # ----------------------------------------------------------------------
-    # 5.3 Normal scanning (if not in Setup Mode)
+    # 6.3 Normal scanning (if not in Setup Mode)
     # ----------------------------------------------------------------------
     if not scan_str:
         return jsonify({
@@ -332,7 +407,7 @@ def process_scan():
     try:
         parsed_data = LicenseParser.parse_aamva(scan_str)
         validation = LicenseParser.validate_license(parsed_data)
-        
+
         response_data = {
             'success': True,
             'name': f"{parsed_data['first_name']} {parsed_data['middle_name']} {parsed_data['last_name']}",
@@ -343,10 +418,10 @@ def process_scan():
             'is_valid': validation['is_valid'],
             'validation_message': get_validation_message(validation),
         }
-        
+
         logging.info(f"Processed normal scan: {response_data}")
         return jsonify(response_data)
-        
+
     except Exception as ex:
         logging.error(f"Error processing scan: {str(ex)}")
         return jsonify({
@@ -355,7 +430,7 @@ def process_scan():
         })
 
 # --------------------------------------------------------------------------
-# 6. Main Entry
+# 7. Main Entry
 # --------------------------------------------------------------------------
 if __name__ == '__main__':
     app.run(debug=DEBUG_MODE)
