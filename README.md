@@ -1,4 +1,4 @@
-# Genopti-OS (v0.31)
+# Genopti-OS (v0.34)
 
 **Genopti-OS** is a Raspberry Pi-based customizable operating system enhancement. It provides a streamlined environment for automated license scanning, validation, and a kiosk-style web interface. Designed for simplicity and reliability, it is perfect for applications such as age verification and document validation in public or private settings.
 
