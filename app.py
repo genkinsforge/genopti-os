@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 import sys
 import json
 import subprocess
+from typing import Tuple
 
 app = Flask(__name__)
 
@@ -39,7 +40,7 @@ logging.basicConfig(
 SETUP_MODE = False
 
 # App info (Open Source placeholders)
-APP_NAME_VERSION = "Genopti-OS (v0.31) - Open Source"
+APP_NAME_VERSION = "Genopti-OS (v0.34) - Open Source"
 REGISTERED_USER = "N/A"
 COMPANY_NAME = "N/A"
 LOCATION = "N/A"
@@ -63,33 +64,24 @@ def load_environment_vars():
     global DISPLAY_SERIAL
     global CPU_UNIQUE_ID
 
-    # Load serial from .env if it exists, otherwise get from CPU
     DISPLAY_SERIAL = os.getenv('DISPLAY_SERIAL', 'N/A')
     CPU_UNIQUE_ID = get_raspberry_pi_serial()
 
 def update_serial_number(suffix):
     """Update the serial number in .env file"""
     try:
-        # Generate new serial number with suffix
         cpu_serial = get_raspberry_pi_serial()
         new_serial = f"{cpu_serial}{suffix}"
-
-        # Update .env file
         env_path = os.path.join(os.path.dirname(__file__), '.env')
 
-        # Read existing content
         existing_lines = []
         if os.path.exists(env_path):
             with open(env_path, 'r') as f:
                 existing_lines = f.readlines()
 
-        # Filter out DISPLAY_SERIAL line if it exists
         updated_lines = [line for line in existing_lines if not line.startswith('DISPLAY_SERIAL=')]
-
-        # Add new serial number
         updated_lines.append(f'DISPLAY_SERIAL={new_serial}\n')
 
-        # Write back to file
         with open(env_path, 'w') as f:
             f.writelines(updated_lines)
 
@@ -117,7 +109,7 @@ load_environment_vars()
 def get_non_loopback_ips():
     """Returns a dict of {interface_name: ip_address} for non-loopback interfaces."""
     ips = {}
-    max_possible = 128  # arbitrary upper bound
+    max_possible = 128
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     bytes_out = max_possible * 32
 
@@ -133,7 +125,7 @@ def get_non_loopback_ips():
         iface_name = namestr[i:i+16].split(b'\0', 1)[0].decode('utf-8')
         ip_bytes = namestr[i+20:i+24]
         ip_addr = socket.inet_ntoa(ip_bytes)
-        if ip_addr != "127.0.0.1":  # Skip loopback
+        if ip_addr != "127.0.0.1":
             ips[iface_name] = ip_addr
     return ips
 
@@ -144,11 +136,9 @@ class LicenseParser:
     @staticmethod
     def parse_aamva(data: str) -> dict:
         try:
-            # Basic format validation
             if not data.startswith('@ANSI '):
                 raise ValueError("Invalid AAMVA format: Missing @ANSI header")
 
-            # Extract fields using regex
             fields = {
                 'first_name': re.search(r'DAC([^D]+)', data).group(1).strip(),
                 'middle_name': re.search(r'DAD([^D]+)', data).group(1).strip(),
@@ -160,7 +150,6 @@ class LicenseParser:
                 'issue_date': re.search(r'DBD(\d{8})', data).group(1)
             }
 
-            # Format dates
             fields['dob'] = datetime.strptime(fields['dob'], '%m%d%Y').date()
             fields['expiration'] = datetime.strptime(fields['expiration'], '%m%d%Y').date()
             fields['issue_date'] = datetime.strptime(fields['issue_date'], '%m%d%Y').date()
@@ -193,17 +182,79 @@ def get_validation_message(validation_result):
     return "VALID and 21 or Older"
 
 # --------------------------------------------------------------------------
-# 5. Setup & Wi-Fi Configuration Logic
+# 5. Setup & System Service Control
 # --------------------------------------------------------------------------
+def validate_command(command: str) -> bool:
+    """Validates that a command string matches exactly one of our predefined commands."""
+    VALID_COMMANDS = {
+        "$$setup$$", "$$exit$$", "$$restartapp$$",
+        "$$enablessh$$", "$$disablessh$$",
+        "$$enablevnc$$", "$$disablevnc$$"
+    }
+    # Also allow serialnumber commands which have JSON payload
+    if command.startswith('$$serialnumber$$'):
+        return True
+    if command.startswith('$$wifi$$'):
+        return True
+    return command in VALID_COMMANDS
+
+def control_service(service: str, action: str) -> Tuple[bool, str]:
+    """Controls system services safely using systemctl."""
+    if service not in ['ssh', 'vnc']:
+        return False, "Invalid service specified"
+    if action not in ['enable', 'disable']:
+        return False, "Invalid action specified"
+        
+    service_map = {
+        'ssh': 'ssh',
+        'vnc': 'vncserver-x11-serviced'
+    }
+    
+    system_service = service_map[service]
+    
+    try:
+        # Enable/disable service
+        subprocess.run(['sudo', 'systemctl', action, system_service], 
+                     check=True, capture_output=True)
+        
+        # Start/stop service
+        start_stop = 'start' if action == 'enable' else 'stop'
+        subprocess.run(['sudo', 'systemctl', start_stop, system_service],
+                     check=True, capture_output=True)
+                     
+        return True, f"Successfully {action}d {service}"
+    except subprocess.CalledProcessError as e:
+        return False, f"Failed to {action} {service}: {e.stderr.decode()}"
+
 def handle_setup_command(scan_str):
-    """
-    Handle various setup commands while in setup mode.
-    e.g. $$serialnumber$${"serial": n2}
-    e.g. $$restartapp$$
-    """
+    """Handle various setup commands while in setup mode."""
+    if not validate_command(scan_str):
+        return {
+            'success': False,
+            'setup_mode': True,
+            'error': 'Invalid command format'
+        }
+
+    # Handle service control commands
+    service_commands = {
+        '$$enablessh$$': ('ssh', 'enable'),
+        '$$disablessh$$': ('ssh', 'disable'),
+        '$$enablevnc$$': ('vnc', 'enable'),
+        '$$disablevnc$$': ('vnc', 'disable')
+    }
+    
+    if scan_str in service_commands:
+        service, action = service_commands[scan_str]
+        success, message = control_service(service, action)
+        return {
+            'success': success,
+            'setup_mode': True,
+            'message': message if success else None,
+            'error': None if success else message
+        }
+
     if scan_str.startswith('$$serialnumber$$'):
         try:
-            # Expecting JSON after $$serialnumber$$
             json_str = scan_str.replace('$$serialnumber$$', '', 1).strip()
             data = json.loads(json_str)
             suffix = data.get("serial", "")
@@ -241,22 +292,11 @@ def handle_setup_command(scan_str):
     return None
 
 def configure_wifi_json(config: dict):
-    """
-    Takes a Python dict with keys:
-      {
-        "ssid": "clusino",
-        "password": "Vorry-07122020!",
-        "country": "US",
-        "encryption": "WPA",
-        "hidden": false
-      }
-    Writes /etc/wpa_supplicant/wpa_supplicant.conf, sets country code, reconfigures Wi-Fi.
-    Returns (success: bool, message: str).
-    """
+    """Configure Wi-Fi using provided JSON configuration."""
     ssid = config.get('ssid', '')
     password = config.get('password', '')
-    country = config.get('country', 'US').upper()  # default "US"
-    encryption = config.get('encryption', 'WPA').upper()  # e.g. "WPA", "WEP", "NOPASS"
+    country = config.get('country', 'US').upper()
+    encryption = config.get('encryption', 'WPA').upper()
     hidden = bool(config.get('hidden', False))
 
     if not ssid:
@@ -264,7 +304,6 @@ def configure_wifi_json(config: dict):
 
     wpa_supplicant_path = "/etc/wpa_supplicant/wpa_supplicant.conf"
 
-    # For WPA/WPA2:
     network_block = f"""
 network={{
     ssid="{ssid}"
@@ -283,7 +322,6 @@ network={{
     except Exception as e:
         return (False, f"Error writing wpa_supplicant.conf: {str(e)}")
 
-    # Reconfigure Wi-Fi
     try:
         subprocess.run(["sudo", "wpa_cli", "-i", "wlan0", "reconfigure"], check=True)
     except subprocess.CalledProcessError as cpe:
@@ -310,9 +348,7 @@ def process_scan():
     scan_str = req_json.get('scan_data', '').strip()
     logging.info(f"Received scan: {repr(scan_str)}")
 
-    # ----------------------------------------------------------------------
-    # 6.1 Check if we should ENTER Setup Mode
-    # ----------------------------------------------------------------------
+    # Enter Setup Mode
     if scan_str == '$$setup$$':
         SETUP_MODE = True
         logging.info("SYSTEM: Entered Setup Mode (Open Source).")
@@ -331,11 +367,8 @@ def process_scan():
             'cpu_unique_id': CPU_UNIQUE_ID,
         })
 
-    # ----------------------------------------------------------------------
-    # 6.2 If ALREADY in Setup Mode, handle setup commands
-    # ----------------------------------------------------------------------
+    # Handle Setup Mode Commands
     if SETUP_MODE:
-        # Check for exit command first
         if scan_str == '$$exit$$':
             SETUP_MODE = False
             logging.info("SYSTEM: Exited Setup Mode, returning to normal scanning.")
@@ -345,16 +378,11 @@ def process_scan():
                 'message': 'Exited Setup Mode, normal scanning resumed'
             })
 
-        # Handle known setup commands (serial number, restart, etc.)
         setup_result = handle_setup_command(scan_str)
         if setup_result:
             return jsonify(setup_result)
 
-        # -------------------------------------------------
-        # NEW: JSON-based Wi-Fi config command
-        # -------------------------------------------------
         if scan_str.startswith("$$wifi$$"):
-            # Remove prefix
             wifi_json_str = scan_str.replace("$$wifi$$", "", 1).strip()
             try:
                 wifi_config = json.loads(wifi_json_str)
@@ -381,7 +409,6 @@ def process_scan():
                 'cpu_unique_id': CPU_UNIQUE_ID
             })
 
-        # If it's some other setup command we haven't handled
         return jsonify({
             'success': True,
             'setup_mode': True,
@@ -395,9 +422,7 @@ def process_scan():
             'cpu_unique_id': CPU_UNIQUE_ID
         })
 
-    # ----------------------------------------------------------------------
-    # 6.3 Normal scanning (if not in Setup Mode)
-    # ----------------------------------------------------------------------
+    # Normal scanning mode
     if not scan_str:
         return jsonify({
             'success': False,
