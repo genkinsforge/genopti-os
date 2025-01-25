@@ -15,9 +15,6 @@ import subprocess
 
 app = Flask(__name__)
 
-# --------------------------------------------------------------------------
-# 1. Configuration & Logging
-# --------------------------------------------------------------------------
 DEBUG_MODE = (os.environ.get('DEBUG_MODE', '0') == '1')
 LOG_LEVEL = logging.DEBUG if DEBUG_MODE else logging.INFO
 LOG_DIR = 'logs'
@@ -33,18 +30,15 @@ logging.basicConfig(
     format='%(asctime)s %(levelname)s [%(filename)s:%(lineno)d]: %(message)s'
 )
 
-# --------------------------------------------------------------------------
-# 2. Global Vars & Environment Loading
-# --------------------------------------------------------------------------
 SETUP_MODE = False
 
-# App info (Open Source placeholders)
-APP_NAME_VERSION = "Genopti-OS (v0.34) - Open Source"
+APP_NAME_VERSION = "Genopti-OS (v0.31) - Open Source"
 REGISTERED_USER = "N/A"
 COMPANY_NAME = "N/A"
 LOCATION = "N/A"
 DISPLAY_SERIAL = "N/A"
 CPU_UNIQUE_ID = "N/A"
+
 
 def get_raspberry_pi_serial():
     """Get the Raspberry Pi CPU serial number from /proc/cpuinfo"""
@@ -57,39 +51,38 @@ def get_raspberry_pi_serial():
         logging.error(f"Error reading CPU serial: {str(e)}")
         return "UNKNOWN"
 
+
 def load_environment_vars():
-    """Load environment variables from .env file"""
-    load_dotenv()
+    """Load environment variables from .env file and update global vars."""
     global DISPLAY_SERIAL
     global CPU_UNIQUE_ID
+    load_dotenv()
 
-    # Load serial from .env if it exists, otherwise get from CPU
+    # Reload from .env
     DISPLAY_SERIAL = os.getenv('DISPLAY_SERIAL', 'N/A')
     CPU_UNIQUE_ID = get_raspberry_pi_serial()
 
+
 def update_serial_number(suffix):
-    """Update the serial number in .env file"""
+    """Update the serial number in .env file and return (bool, message_or_new_serial)."""
     try:
-        # Generate new serial number with suffix
+        # Generate new serial number
         cpu_serial = get_raspberry_pi_serial()
         new_serial = f"{cpu_serial}{suffix}"
 
-        # Update .env file
         env_path = os.path.join(os.path.dirname(__file__), '.env')
 
-        # Read existing content
+        # Read existing .env content
         existing_lines = []
         if os.path.exists(env_path):
             with open(env_path, 'r') as f:
                 existing_lines = f.readlines()
 
-        # Filter out DISPLAY_SERIAL line if it exists
+        # Filter out any existing DISPLAY_SERIAL= lines
         updated_lines = [line for line in existing_lines if not line.startswith('DISPLAY_SERIAL=')]
-
-        # Add new serial number
+        # Add the new one
         updated_lines.append(f'DISPLAY_SERIAL={new_serial}\n')
 
-        # Write back to file
         with open(env_path, 'w') as f:
             f.writelines(updated_lines)
 
@@ -98,8 +91,9 @@ def update_serial_number(suffix):
         logging.error(f"Error updating serial number: {str(e)}")
         return False, str(e)
 
+
 def restart_application():
-    """Restart the Flask application"""
+    """Restart the Flask application."""
     try:
         python = sys.executable
         os.execl(python, python, *sys.argv)
@@ -108,16 +102,15 @@ def restart_application():
         return False, str(e)
     return True, "Application restarting..."
 
+
 # Load environment variables at startup
 load_environment_vars()
 
-# --------------------------------------------------------------------------
-# 3. Utility: Get Non-Loopback IPs (Linux-specific)
-# --------------------------------------------------------------------------
+
 def get_non_loopback_ips():
     """Returns a dict of {interface_name: ip_address} for non-loopback interfaces."""
     ips = {}
-    max_possible = 128  # arbitrary upper bound
+    max_possible = 128
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     bytes_out = max_possible * 32
 
@@ -133,22 +126,18 @@ def get_non_loopback_ips():
         iface_name = namestr[i:i+16].split(b'\0', 1)[0].decode('utf-8')
         ip_bytes = namestr[i+20:i+24]
         ip_addr = socket.inet_ntoa(ip_bytes)
-        if ip_addr != "127.0.0.1":  # Skip loopback
+        if ip_addr != "127.0.0.1":
             ips[iface_name] = ip_addr
     return ips
 
-# --------------------------------------------------------------------------
-# 4. License Parsing & Validation Classes
-# --------------------------------------------------------------------------
+
 class LicenseParser:
     @staticmethod
     def parse_aamva(data: str) -> dict:
         try:
-            # Basic format validation
             if not data.startswith('@ANSI '):
                 raise ValueError("Invalid AAMVA format: Missing @ANSI header")
 
-            # Extract fields using regex
             fields = {
                 'first_name': re.search(r'DAC([^D]+)', data).group(1).strip(),
                 'middle_name': re.search(r'DAD([^D]+)', data).group(1).strip(),
@@ -160,11 +149,9 @@ class LicenseParser:
                 'issue_date': re.search(r'DBD(\d{8})', data).group(1)
             }
 
-            # Format dates
             fields['dob'] = datetime.strptime(fields['dob'], '%m%d%Y').date()
             fields['expiration'] = datetime.strptime(fields['expiration'], '%m%d%Y').date()
             fields['issue_date'] = datetime.strptime(fields['issue_date'], '%m%d%Y').date()
-
             return fields
 
         except Exception as e:
@@ -174,16 +161,15 @@ class LicenseParser:
     @staticmethod
     def validate_license(parsed_data: dict) -> dict:
         today = datetime.now().date()
-        days_old = (today - parsed_data['dob']).days
-        age = days_old // 365
+        age = (today - parsed_data['dob']).days // 365
         is_expired = parsed_data['expiration'] < today
 
-        result = {
-            'is_valid': age >= 21 and not is_expired,
+        return {
+            'is_valid': (age >= 21) and (not is_expired),
             'age': age,
             'is_expired': is_expired
         }
-        return result
+
 
 def get_validation_message(validation_result):
     if validation_result['is_expired']:
@@ -192,179 +178,19 @@ def get_validation_message(validation_result):
         return "UNDER 21"
     return "VALID and 21 or Older"
 
-# --------------------------------------------------------------------------
-# 5. Setup & Wi-Fi Configuration Logic
-# --------------------------------------------------------------------------
-def handle_setup_command(scan_str):
-    """
-    Handle various setup commands while in setup mode.
-    e.g. $$serialnumber$${"serial": n2}
-         $$restartapp$$
-         $$enablessh$$
-         $$disablessh$$
-         $$enablevnc$$
-         $$disablevnc$$
-    """
-    # -------------------------------------------------------------
-    # 1. Update Serial Number
-    # -------------------------------------------------------------
-    if scan_str.startswith('$$serialnumber$$'):
-        try:
-            # Expecting JSON after $$serialnumber$$
-            json_str = scan_str.replace('$$serialnumber$$', '', 1).strip()
-            data = json.loads(json_str)
-            suffix = data.get("serial", "")
-
-            # Very basic validation to prevent injection attempts
-            if not re.match(r'^[A-Za-z0-9_-]*$', suffix):
-                return {
-                    'success': False,
-                    'setup_mode': True,
-                    'error': 'Invalid characters in serial suffix.'
-                }
-
-            success, result = update_serial_number(suffix)
-            if success:
-                return {
-                    'success': True,
-                    'setup_mode': True,
-                    'message': f'Serial number updated to: {result}',
-                    'needs_reload': True
-                }
-            else:
-                return {
-                    'success': False,
-                    'setup_mode': True,
-                    'error': f'Failed to update serial: {result}'
-                }
-        except Exception as e:
-            return {
-                'success': False,
-                'setup_mode': True,
-                'error': f'Invalid serial number JSON: {str(e)}'
-            }
-
-    # -------------------------------------------------------------
-    # 2. Restart Application
-    # -------------------------------------------------------------
-    elif scan_str == '$$restartapp$$':
-        success, message = restart_application()
-        return {
-            'success': success,
-            'setup_mode': True,
-            'message': message,
-            'needs_reload': True
-        }
-
-    # -------------------------------------------------------------
-    # 3. Enable SSH
-    # -------------------------------------------------------------
-    elif scan_str == '$$enablessh$$':
-        try:
-            subprocess.run(["sudo", "systemctl", "enable", "ssh"], check=True)
-            subprocess.run(["sudo", "systemctl", "start", "ssh"], check=True)
-            return {
-                'success': True,
-                'setup_mode': True,
-                'message': 'SSH service enabled and started.'
-            }
-        except subprocess.CalledProcessError as e:
-            return {
-                'success': False,
-                'setup_mode': True,
-                'error': f'Failed to enable/start SSH: {str(e)}'
-            }
-
-    # -------------------------------------------------------------
-    # 4. Disable SSH
-    # -------------------------------------------------------------
-    elif scan_str == '$$disablessh$$':
-        try:
-            subprocess.run(["sudo", "systemctl", "disable", "ssh"], check=True)
-            subprocess.run(["sudo", "systemctl", "stop", "ssh"], check=True)
-            return {
-                'success': True,
-                'setup_mode': True,
-                'message': 'SSH service disabled and stopped.'
-            }
-        except subprocess.CalledProcessError as e:
-            return {
-                'success': False,
-                'setup_mode': True,
-                'error': f'Failed to disable/stop SSH: {str(e)}'
-            }
-
-    # -------------------------------------------------------------
-    # 5. Enable VNC
-    # -------------------------------------------------------------
-    elif scan_str == '$$enablevnc$$':
-        try:
-            # The RealVNC service name on Raspberry Pi OS is often:
-            # "vncserver-x11-serviced"
-            subprocess.run(["sudo", "systemctl", "enable", "vncserver-x11-serviced"], check=True)
-            subprocess.run(["sudo", "systemctl", "start", "vncserver-x11-serviced"], check=True)
-            return {
-                'success': True,
-                'setup_mode': True,
-                'message': 'VNC service enabled and started.'
-            }
-        except subprocess.CalledProcessError as e:
-            return {
-                'success': False,
-                'setup_mode': True,
-                'error': f'Failed to enable/start VNC: {str(e)}'
-            }
-
-    # -------------------------------------------------------------
-    # 6. Disable VNC
-    # -------------------------------------------------------------
-    elif scan_str == '$$disablevnc$$':
-        try:
-            subprocess.run(["sudo", "systemctl", "disable", "vncserver-x11-serviced"], check=True)
-            subprocess.run(["sudo", "systemctl", "stop", "vncserver-x11-serviced"], check=True)
-            return {
-                'success': True,
-                'setup_mode': True,
-                'message': 'VNC service disabled and stopped.'
-            }
-        except subprocess.CalledProcessError as e:
-            return {
-                'success': False,
-                'setup_mode': True,
-                'error': f'Failed to disable/stop VNC: {str(e)}'
-            }
-
-    # -------------------------------------------------------------
-    # 7. No Match -> Return None, let caller handle
-    # -------------------------------------------------------------
-    return None
 
 def configure_wifi_json(config: dict):
-    """
-    Takes a Python dict with keys:
-      {
-        "ssid": "exampleSSID",
-        "password": "examplePassword",
-        "country": "US",
-        "encryption": "WPA",
-        "hidden": false
-      }
-    Writes /etc/wpa_supplicant/wpa_supplicant.conf, sets country code, reconfigures Wi-Fi.
-    Returns (success: bool, message: str).
-    """
     ssid = config.get('ssid', '')
     password = config.get('password', '')
-    country = config.get('country', 'US').upper()  # default "US"
-    encryption = config.get('encryption', 'WPA').upper()  # e.g. "WPA", "WEP", "NOPASS"
+    country = config.get('country', 'US').upper()
+    encryption = config.get('encryption', 'WPA').upper()
     hidden = bool(config.get('hidden', False))
 
     if not ssid:
         return (False, "No SSID provided in JSON.")
 
-    # Basic validation to help mitigate injection attempts
+    # Basic check
     for field_name, field_value in [('SSID', ssid), ('Password', password)]:
-        # Allow typical Wi-Fi chars: letters, digits, punctuation, space, etc.
-        # Adjust the regex as needed if you want stricter rules.
         if not re.match(r'^[\w \-!@#$%^&*\(\)\._+={}\[\]]*$', field_value):
             return (False, f"Invalid characters in {field_name} field.")
 
@@ -389,7 +215,7 @@ network={{
     except Exception as e:
         return (False, f"Error writing wpa_supplicant.conf: {str(e)}")
 
-    # Reconfigure Wi-Fi
+    # Reconfigure
     try:
         subprocess.run(["sudo", "wpa_cli", "-i", "wlan0", "reconfigure"], check=True)
     except subprocess.CalledProcessError as cpe:
@@ -397,112 +223,201 @@ network={{
 
     return (True, f"Wi-Fi configured. SSID: {ssid}, Country: {country}")
 
-# --------------------------------------------------------------------------
-# 6. Flask Routes
-# --------------------------------------------------------------------------
+
+def _setup_response(success, message):
+    """
+    Helper to build a consistent JSON response for Setup Mode,
+    including full system info each time so the UI can reflect updates.
+    """
+    return {
+        'success': success,
+        'setup_mode': True,
+        'message': message,
+        'ips': get_non_loopback_ips(),
+        'system_name': APP_NAME_VERSION,
+        'registered_user': REGISTERED_USER,
+        'company_name': COMPANY_NAME,
+        'location': LOCATION,
+        'display_serial': DISPLAY_SERIAL,
+        'cpu_unique_id': CPU_UNIQUE_ID
+    }
+
+
+def handle_setup_command(scan_str):
+    """
+    Handle setup commands (enable SSH, update serial, etc.).
+    Return a dict with success/failure + updated system info.
+    """
+    global DISPLAY_SERIAL
+
+    # 1) Update Serial Number
+    if scan_str.startswith('$$serialnumber$$'):
+        try:
+            json_str = scan_str.replace('$$serialnumber$$', '', 1).strip()
+            data = json.loads(json_str)
+            suffix = data.get("serial", "")
+
+            # Basic validation
+            if not re.match(r'^[A-Za-z0-9_-]*$', suffix):
+                return _setup_response(
+                    success=False,
+                    message='Invalid characters in serial suffix.'
+                )
+
+            success, result = update_serial_number(suffix)
+            if success:
+                # Re-load environment vars to pick up new DISPLAY_SERIAL
+                load_environment_vars()
+                return _setup_response(
+                    success=True,
+                    message=f"Serial number updated to: {DISPLAY_SERIAL}"
+                )
+            else:
+                return _setup_response(
+                    success=False,
+                    message=f"Failed to update serial: {result}"
+                )
+        except Exception as e:
+            return _setup_response(
+                success=False,
+                message=f"Invalid serial number JSON: {str(e)}"
+            )
+
+    # 2) Restart Application
+    elif scan_str == '$$restartapp$$':
+        success, msg = restart_application()
+        return _setup_response(
+            success=success,
+            message=msg
+        )
+
+    # 3) Enable SSH
+    elif scan_str == '$$enablessh$$':
+        try:
+            # Use raspi-config to enable SSH
+            subprocess.run(["sudo", "raspi-config", "nonint", "do_ssh", "0"], check=True)
+            # Also ensure systemd start + enable
+            subprocess.run(["sudo", "systemctl", "enable", "ssh"], check=True)
+            subprocess.run(["sudo", "systemctl", "start", "ssh"], check=True)
+            return _setup_response(
+                success=True,
+                message='SSH service enabled and started.'
+            )
+        except subprocess.CalledProcessError as e:
+            return _setup_response(
+                success=False,
+                message=f'Failed to enable/start SSH: {str(e)}'
+            )
+
+    # 4) Disable SSH
+    elif scan_str == '$$disablessh$$':
+        try:
+            # Use raspi-config to disable SSH
+            subprocess.run(["sudo", "raspi-config", "nonint", "do_ssh", "1"], check=True)
+            # Also ensure systemd stop + disable
+            subprocess.run(["sudo", "systemctl", "disable", "ssh"], check=True)
+            subprocess.run(["sudo", "systemctl", "stop", "ssh"], check=True)
+            return _setup_response(
+                success=True,
+                message='SSH service disabled and stopped.'
+            )
+        except subprocess.CalledProcessError as e:
+            return _setup_response(
+                success=False,
+                message=f'Failed to disable/stop SSH: {str(e)}'
+            )
+
+    # 5) Enable VNC
+    elif scan_str == '$$enablevnc$$':
+        try:
+            # Use raspi-config to enable VNC
+            subprocess.run(["sudo", "raspi-config", "nonint", "do_vnc", "0"], check=True)
+            # Also ensure systemd start + enable
+            subprocess.run(["sudo", "systemctl", "enable", "vncserver-x11-serviced"], check=True)
+            subprocess.run(["sudo", "systemctl", "start", "vncserver-x11-serviced"], check=True)
+            return _setup_response(
+                success=True,
+                message='VNC service enabled and started.'
+            )
+        except subprocess.CalledProcessError as e:
+            return _setup_response(
+                success=False,
+                message=f'Failed to enable/start VNC: {str(e)}'
+            )
+
+    # 6) Disable VNC
+    elif scan_str == '$$disablevnc$$':
+        try:
+            # Use raspi-config to disable VNC
+            subprocess.run(["sudo", "raspi-config", "nonint", "do_vnc", "1"], check=True)
+            # Also ensure systemd stop + disable
+            subprocess.run(["sudo", "systemctl", "disable", "vncserver-x11-serviced"], check=True)
+            subprocess.run(["sudo", "systemctl", "stop", "vncserver-x11-serviced"], check=True)
+            return _setup_response(
+                success=True,
+                message='VNC service disabled and stopped.'
+            )
+        except subprocess.CalledProcessError as e:
+            return _setup_response(
+                success=False,
+                message=f'Failed to disable/stop VNC: {str(e)}'
+            )
+
+    # 7) Wi-Fi JSON Config
+    if scan_str.startswith("$$wifi$$"):
+        wifi_json_str = scan_str.replace("$$wifi$$", "", 1).strip()
+        try:
+            wifi_config = json.loads(wifi_json_str)
+        except json.JSONDecodeError as e:
+            return _setup_response(
+                success=False,
+                message=f"Invalid Wi-Fi JSON: {str(e)}"
+            )
+
+        success, msg = configure_wifi_json(wifi_config)
+        return _setup_response(
+            success=success,
+            message=msg
+        )
+
+    # 8) No recognized command
+    return _setup_response(
+        success=True,
+        message=f"Unrecognized setup command: {scan_str}"
+    )
+
+
 @app.route('/')
 def home():
-    """Renders the scanning interface."""
     return render_template('index.html',
                            debug_mode=DEBUG_MODE,
                            scan_reset_seconds=15,
                            scan_inactivity_ms=300)
 
+
 @app.route('/process_scan', methods=['POST'])
 def process_scan():
     global SETUP_MODE
-
     req_json = request.json or {}
     scan_str = req_json.get('scan_data', '').strip()
     logging.info(f"Received scan: {repr(scan_str)}")
 
-    # Basic check to avoid any injection-like strings:
-    # If you're extremely strict, you could block certain characters outright:
-    # e.g. if re.search(r'[;&|><]', scan_str): ...
-    # For demonstration, we'll rely on the strict command handling below.
     if len(scan_str) > 1000:
-        # Arbitrarily cap length; prevents huge input attempts
         return jsonify({
             'success': False,
             'error': 'Scan data too long; potential injection blocked.'
         })
 
-    # ----------------------------------------------------------------------
-    # 6.1 Check if we should ENTER Setup Mode
-    # ----------------------------------------------------------------------
+    # ----------------------------------------------------------------
+    # Check if we should ENTER Setup Mode
+    # ----------------------------------------------------------------
     if scan_str == '$$setup$$':
         SETUP_MODE = True
-        logging.info("SYSTEM: Entered Setup Mode (Open Source).")
-
-        ip_info = get_non_loopback_ips()
+        logging.info("SYSTEM: Entered Setup Mode.")
         return jsonify({
             'success': True,
             'setup_mode': True,
             'message': 'Entered Setup Mode',
-            'ips': ip_info,
-            'system_name': APP_NAME_VERSION,
-            'registered_user': REGISTERED_USER,
-            'company_name': COMPANY_NAME,
-            'location': LOCATION,
-            'display_serial': DISPLAY_SERIAL,
-            'cpu_unique_id': CPU_UNIQUE_ID,
-        })
-
-    # ----------------------------------------------------------------------
-    # 6.2 If ALREADY in Setup Mode, handle setup commands
-    # ----------------------------------------------------------------------
-    if SETUP_MODE:
-        # Check for exit command first
-        if scan_str == '$$exit$$':
-            SETUP_MODE = False
-            logging.info("SYSTEM: Exited Setup Mode, returning to normal scanning.")
-            return jsonify({
-                'success': True,
-                'setup_mode': False,
-                'message': 'Exited Setup Mode, normal scanning resumed'
-            })
-
-        # Handle known setup commands (serial number, restart, SSH/VNC, etc.)
-        setup_result = handle_setup_command(scan_str)
-        if setup_result is not None:
-            return jsonify(setup_result)
-
-        # -------------------------------------------------
-        # NEW: JSON-based Wi-Fi config command
-        # -------------------------------------------------
-        if scan_str.startswith("$$wifi$$"):
-            # Remove prefix
-            wifi_json_str = scan_str.replace("$$wifi$$", "", 1).strip()
-            try:
-                wifi_config = json.loads(wifi_json_str)
-            except json.JSONDecodeError as e:
-                return jsonify({
-                    'success': False,
-                    'setup_mode': True,
-                    'error': f"Invalid Wi-Fi JSON: {str(e)}"
-                })
-
-            success, message = configure_wifi_json(wifi_config)
-            logging.info(f"Wi-Fi config JSON parsed. Result: {message}")
-
-            return jsonify({
-                'success': success,
-                'setup_mode': True,
-                'message': message,
-                'ips': get_non_loopback_ips(),
-                'system_name': APP_NAME_VERSION,
-                'registered_user': REGISTERED_USER,
-                'company_name': COMPANY_NAME,
-                'location': LOCATION,
-                'display_serial': DISPLAY_SERIAL,
-                'cpu_unique_id': CPU_UNIQUE_ID
-            })
-
-        # If it's some other setup command we haven't handled
-        return jsonify({
-            'success': True,
-            'setup_mode': True,
-            'message': f'Setup command received: {scan_str}',
             'ips': get_non_loopback_ips(),
             'system_name': APP_NAME_VERSION,
             'registered_user': REGISTERED_USER,
@@ -512,17 +427,34 @@ def process_scan():
             'cpu_unique_id': CPU_UNIQUE_ID
         })
 
-    # ----------------------------------------------------------------------
-    # 6.3 Normal scanning (if not in Setup Mode)
-    # ----------------------------------------------------------------------
+    # ----------------------------------------------------------------
+    # If ALREADY in Setup Mode, handle setup commands
+    # ----------------------------------------------------------------
+    if SETUP_MODE:
+        if scan_str == '$$exit$$':
+            SETUP_MODE = False
+            logging.info("SYSTEM: Exited Setup Mode, returning to normal scanning.")
+            return jsonify({
+                'success': True,
+                'setup_mode': False,
+                'message': 'Exited Setup Mode, normal scanning resumed'
+            })
+
+        # Process known or unknown setup commands
+        setup_result = handle_setup_command(scan_str)
+        return jsonify(setup_result)
+
+    # ----------------------------------------------------------------
+    # Normal scanning mode (NOT in Setup Mode)
+    # ----------------------------------------------------------------
     if not scan_str:
         return jsonify({
             'success': False,
             'error': 'No scan data received.'
         })
 
+    # Attempt to parse as AAMVA data
     try:
-        # Attempt to parse as AAMVA data
         parsed_data = LicenseParser.parse_aamva(scan_str)
         validation = LicenseParser.validate_license(parsed_data)
 
@@ -547,8 +479,6 @@ def process_scan():
             'error': str(ex)
         })
 
-# --------------------------------------------------------------------------
-# 7. Main Entry
-# --------------------------------------------------------------------------
+
 if __name__ == '__main__':
     app.run(debug=DEBUG_MODE)
