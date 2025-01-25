@@ -96,6 +96,12 @@ $SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl enable vncserver-x11-servic
 $SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl start vncserver-x11-serviced
 $SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl disable vncserver-x11-serviced
 $SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop vncserver-x11-serviced
+
+# Allow $SERVICE_USER to run raspi-config for SSH/VNC:
+$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/raspi-config nonint do_ssh 0
+$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/raspi-config nonint do_ssh 1
+$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/raspi-config nonint do_vnc 0
+$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/raspi-config nonint do_vnc 1
 EOL
 
 chmod 440 "$SUDOERS_FILE"
