@@ -32,7 +32,7 @@ logging.basicConfig(
 
 SETUP_MODE = False
 
-APP_NAME_VERSION = "Genopti-OS (v0.31) - Open Source"
+APP_NAME_VERSION = "Genopti-OS (v0.34) - Open Source"
 REGISTERED_USER = "N/A"
 COMPANY_NAME = "N/A"
 LOCATION = "N/A"
