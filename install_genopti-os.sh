@@ -67,19 +67,37 @@ pip install -r "$REQUIREMENTS_FILE"
 deactivate
 
 # --[ Adjust ownership to new service user ]----------------------------------
-# This ensures the service user can read and execute files as needed.
 echo "Setting ownership of $APP_DIR to $SERVICE_USER:$SERVICE_GROUP..."
 chown -R "$SERVICE_USER":"$SERVICE_GROUP" "$APP_DIR"
 chmod -R 750 "$APP_DIR"
 
-# --[ Allow specific sudo command for service user ]--------------------------
-echo "Configuring sudoers file to allow $SERVICE_USER to execute wpa_cli without password..."
+# --[ Configure sudoers for limited passwordless sudo ]-----------------------
+#
+# We grant genopti-svc passwordless sudo ONLY for:
+#  - wpa_cli -i wlan0 reconfigure
+#  - systemctl enable|start|stop|disable ssh
+#  - systemctl enable|start|stop|disable vncserver-x11-serviced
+# 
+# This matches what the Flask setup-mode commands require.
+#
+echo "Configuring sudoers file to allow $SERVICE_USER to execute needed commands without password..."
 cat > "$SUDOERS_FILE" <<EOL
-# Allow $SERVICE_USER to run wpa_cli without a password
+# Allow $SERVICE_USER to run wpa_cli without a password:
 $SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/wpa_cli -i wlan0 reconfigure
+
+# Allow $SERVICE_USER to manage SSH:
+$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl enable ssh
+$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl start ssh
+$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl disable ssh
+$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop ssh
+
+# Allow $SERVICE_USER to manage RealVNC:
+$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl enable vncserver-x11-serviced
+$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl start vncserver-x11-serviced
+$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl disable vncserver-x11-serviced
+$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop vncserver-x11-serviced
 EOL
 
-# Ensure correct permissions for the sudoers file
 chmod 440 "$SUDOERS_FILE"
 
 # --[ Create or update systemd service file ]---------------------------------
@@ -99,7 +117,7 @@ ExecStart=$VENV_DIR/bin/python $APP_SCRIPT
 Restart=always
 Environment=PYTHONUNBUFFERED=1
 
-# New environment variables
+# Default environment variables
 Environment=DEBUG_MODE=${DEFAULT_DEBUG_MODE}
 Environment=SCAN_RESET_SECONDS=${DEFAULT_SCAN_RESET_SECONDS}
 Environment=SCAN_INACTIVITY_MS=${DEFAULT_SCAN_INACTIVITY_MS}
