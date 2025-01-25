@@ -1,17 +1,17 @@
-from flask import Flask, render_template, request, jsonify
-from datetime import datetime
+import subprocess
+import os
+import sys
+import json
 import re
 import logging
 from logging.handlers import RotatingFileHandler
-import os
+from datetime import datetime
+from dotenv import load_dotenv
+from flask import Flask, render_template, request, jsonify
 import socket
 import fcntl
 import struct
 import array
-from dotenv import load_dotenv
-import sys
-import json
-import subprocess
 
 app = Flask(__name__)
 
@@ -41,7 +41,6 @@ CPU_UNIQUE_ID = "N/A"
 
 
 def get_raspberry_pi_serial():
-    """Get the Raspberry Pi CPU serial number from /proc/cpuinfo"""
     try:
         with open('/proc/cpuinfo', 'r') as f:
             for line in f:
@@ -49,38 +48,30 @@ def get_raspberry_pi_serial():
                     return line.split(':')[1].strip()
     except Exception as e:
         logging.error(f"Error reading CPU serial: {str(e)}")
-        return "UNKNOWN"
+    return "UNKNOWN"
 
 
 def load_environment_vars():
-    """Load environment variables from .env file and update global vars."""
     global DISPLAY_SERIAL
     global CPU_UNIQUE_ID
     load_dotenv()
-
-    # Reload from .env
     DISPLAY_SERIAL = os.getenv('DISPLAY_SERIAL', 'N/A')
     CPU_UNIQUE_ID = get_raspberry_pi_serial()
 
 
 def update_serial_number(suffix):
-    """Update the serial number in .env file and return (bool, message_or_new_serial)."""
     try:
-        # Generate new serial number
         cpu_serial = get_raspberry_pi_serial()
         new_serial = f"{cpu_serial}{suffix}"
 
         env_path = os.path.join(os.path.dirname(__file__), '.env')
 
-        # Read existing .env content
         existing_lines = []
         if os.path.exists(env_path):
             with open(env_path, 'r') as f:
                 existing_lines = f.readlines()
 
-        # Filter out any existing DISPLAY_SERIAL= lines
         updated_lines = [line for line in existing_lines if not line.startswith('DISPLAY_SERIAL=')]
-        # Add the new one
         updated_lines.append(f'DISPLAY_SERIAL={new_serial}\n')
 
         with open(env_path, 'w') as f:
@@ -93,7 +84,6 @@ def update_serial_number(suffix):
 
 
 def restart_application():
-    """Restart the Flask application."""
     try:
         python = sys.executable
         os.execl(python, python, *sys.argv)
@@ -103,12 +93,11 @@ def restart_application():
     return True, "Application restarting..."
 
 
-# Load environment variables at startup
+# Called at startup
 load_environment_vars()
 
 
 def get_non_loopback_ips():
-    """Returns a dict of {interface_name: ip_address} for non-loopback interfaces."""
     ips = {}
     max_possible = 128
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -117,7 +106,7 @@ def get_non_loopback_ips():
     names = array.array('B', b'\0' * bytes_out)
     outbytes = struct.unpack('iL', fcntl.ioctl(
         sock.fileno(),
-        0x8912,  # SIOCGIFCONF
+        0x8912,
         struct.pack('iL', bytes_out, names.buffer_info()[0])
     ))[0]
     namestr = names.tobytes()
@@ -153,7 +142,6 @@ class LicenseParser:
             fields['expiration'] = datetime.strptime(fields['expiration'], '%m%d%Y').date()
             fields['issue_date'] = datetime.strptime(fields['issue_date'], '%m%d%Y').date()
             return fields
-
         except Exception as e:
             logging.error(f"Error parsing license data: {str(e)}")
             raise ValueError(f"Error parsing license data: {str(e)}")
@@ -163,7 +151,6 @@ class LicenseParser:
         today = datetime.now().date()
         age = (today - parsed_data['dob']).days // 365
         is_expired = parsed_data['expiration'] < today
-
         return {
             'is_valid': (age >= 21) and (not is_expired),
             'age': age,
@@ -189,14 +176,12 @@ def configure_wifi_json(config: dict):
     if not ssid:
         return (False, "No SSID provided in JSON.")
 
-    # Basic check
     for field_name, field_value in [('SSID', ssid), ('Password', password)]:
         if not re.match(r'^[\w \-!@#$%^&*\(\)\._+={}\[\]]*$', field_value):
             return (False, f"Invalid characters in {field_name} field.")
 
     wpa_supplicant_path = "/etc/wpa_supplicant/wpa_supplicant.conf"
 
-    # For WPA/WPA2:
     network_block = f"""
 network={{
     ssid="{ssid}"
@@ -205,7 +190,6 @@ network={{
     psk="{password}"
 }}
 """
-
     try:
         with open(wpa_supplicant_path, "w") as f:
             f.write("ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\n")
@@ -215,7 +199,6 @@ network={{
     except Exception as e:
         return (False, f"Error writing wpa_supplicant.conf: {str(e)}")
 
-    # Reconfigure
     try:
         subprocess.run(["sudo", "wpa_cli", "-i", "wlan0", "reconfigure"], check=True)
     except subprocess.CalledProcessError as cpe:
@@ -225,10 +208,6 @@ network={{
 
 
 def _setup_response(success, message):
-    """
-    Helper to build a consistent JSON response for Setup Mode,
-    including full system info each time so the UI can reflect updates.
-    """
     return {
         'success': success,
         'setup_mode': True,
@@ -243,11 +222,90 @@ def _setup_response(success, message):
     }
 
 
+# ---------------------------------------------------------------------------
+# 1) Check if a particular service exists (e.g. "wayvnc.service" or "vncserver-x11-serviced")
+# ---------------------------------------------------------------------------
+def service_exists(service_name: str) -> bool:
+    """Return True if systemd knows about the given service."""
+    result = subprocess.run(
+        ["systemctl", "status", service_name],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    return (result.returncode == 0)
+
+
+# ---------------------------------------------------------------------------
+# 2) Enable VNC: run raspi-config, then enable whichever VNC service is found
+# ---------------------------------------------------------------------------
+def enable_vnc():
+    # 1) Attempt to enable VNC mode in raspi-config
+    try:
+        subprocess.run(["sudo", "raspi-config", "nonint", "do_vnc", "0"], check=True)
+    except subprocess.CalledProcessError as e:
+        # If raspi-config fails, return an error message right away
+        return False, f"raspi-config do_vnc 0 failed: {str(e)}"
+
+    # 2) Check for RealVNC or WayVNC
+    if service_exists("vncserver-x11-serviced"):
+        # RealVNC
+        try:
+            subprocess.run(["sudo", "systemctl", "enable", "vncserver-x11-serviced"], check=True)
+            subprocess.run(["sudo", "systemctl", "start", "vncserver-x11-serviced"], check=True)
+            return True, "Enabled RealVNC (vncserver-x11-serviced)."
+        except subprocess.CalledProcessError as e:
+            return False, f"Could not enable/start vncserver-x11-serviced: {str(e)}"
+    elif service_exists("wayvnc.service"):
+        # WayVNC
+        try:
+            subprocess.run(["sudo", "systemctl", "enable", "wayvnc"], check=True)
+            subprocess.run(["sudo", "systemctl", "start", "wayvnc"], check=True)
+            return True, "Enabled WayVNC (wayvnc.service)."
+        except subprocess.CalledProcessError as e:
+            return False, f"Could not enable/start wayvnc: {str(e)}"
+    else:
+        # Neither RealVNC nor WayVNC found
+        return False, (
+            "raspi-config do_vnc 0 succeeded, but no recognized VNC service was found. "
+            "Install realvnc-vnc-server or confirm wayvnc.service is installed."
+        )
+
+
+# ---------------------------------------------------------------------------
+# 3) Disable VNC: run raspi-config, then disable whichever VNC service is found
+# ---------------------------------------------------------------------------
+def disable_vnc():
+    # 1) Attempt to disable VNC mode in raspi-config
+    try:
+        subprocess.run(["sudo", "raspi-config", "nonint", "do_vnc", "1"], check=True)
+    except subprocess.CalledProcessError as e:
+        return False, f"raspi-config do_vnc 1 failed: {str(e)}"
+
+    # 2) Check for RealVNC or WayVNC
+    if service_exists("vncserver-x11-serviced"):
+        # RealVNC
+        try:
+            subprocess.run(["sudo", "systemctl", "disable", "vncserver-x11-serviced"], check=True)
+            subprocess.run(["sudo", "systemctl", "stop", "vncserver-x11-serviced"], check=True)
+            return True, "Disabled RealVNC (vncserver-x11-serviced)."
+        except subprocess.CalledProcessError as e:
+            return False, f"Could not disable/stop vncserver-x11-serviced: {str(e)}"
+    elif service_exists("wayvnc.service"):
+        # WayVNC
+        try:
+            subprocess.run(["sudo", "systemctl", "disable", "wayvnc"], check=True)
+            subprocess.run(["sudo", "systemctl", "stop", "wayvnc"], check=True)
+            return True, "Disabled WayVNC (wayvnc.service)."
+        except subprocess.CalledProcessError as e:
+            return False, f"Could not disable/stop wayvnc: {str(e)}"
+    else:
+        return False, (
+            "raspi-config do_vnc 1 succeeded, but no recognized VNC service was found. "
+            "Install realvnc-vnc-server or confirm wayvnc.service is installed."
+        )
+
+
 def handle_setup_command(scan_str):
-    """
-    Handle setup commands (enable SSH, update serial, etc.).
-    Return a dict with success/failure + updated system info.
-    """
     global DISPLAY_SERIAL
 
     # 1) Update Serial Number
@@ -257,134 +315,67 @@ def handle_setup_command(scan_str):
             data = json.loads(json_str)
             suffix = data.get("serial", "")
 
-            # Basic validation
             if not re.match(r'^[A-Za-z0-9_-]*$', suffix):
-                return _setup_response(
-                    success=False,
-                    message='Invalid characters in serial suffix.'
-                )
+                return _setup_response(False, 'Invalid characters in serial suffix.')
 
             success, result = update_serial_number(suffix)
             if success:
-                # Re-load environment vars to pick up new DISPLAY_SERIAL
                 load_environment_vars()
-                return _setup_response(
-                    success=True,
-                    message=f"Serial number updated to: {DISPLAY_SERIAL}"
-                )
+                return _setup_response(True, f"Serial number updated to: {DISPLAY_SERIAL}")
             else:
-                return _setup_response(
-                    success=False,
-                    message=f"Failed to update serial: {result}"
-                )
+                return _setup_response(False, f"Failed to update serial: {result}")
+
         except Exception as e:
-            return _setup_response(
-                success=False,
-                message=f"Invalid serial number JSON: {str(e)}"
-            )
+            return _setup_response(False, f"Invalid serial number JSON: {str(e)}")
 
     # 2) Restart Application
     elif scan_str == '$$restartapp$$':
         success, msg = restart_application()
-        return _setup_response(
-            success=success,
-            message=msg
-        )
+        return _setup_response(success, msg)
 
     # 3) Enable SSH
     elif scan_str == '$$enablessh$$':
         try:
-            # Use raspi-config to enable SSH
             subprocess.run(["sudo", "raspi-config", "nonint", "do_ssh", "0"], check=True)
-            # Also ensure systemd start + enable
             subprocess.run(["sudo", "systemctl", "enable", "ssh"], check=True)
             subprocess.run(["sudo", "systemctl", "start", "ssh"], check=True)
-            return _setup_response(
-                success=True,
-                message='SSH service enabled and started.'
-            )
+            return _setup_response(True, 'SSH service enabled and started.')
         except subprocess.CalledProcessError as e:
-            return _setup_response(
-                success=False,
-                message=f'Failed to enable/start SSH: {str(e)}'
-            )
+            return _setup_response(False, f'Failed to enable/start SSH: {str(e)}')
 
     # 4) Disable SSH
     elif scan_str == '$$disablessh$$':
         try:
-            # Use raspi-config to disable SSH
             subprocess.run(["sudo", "raspi-config", "nonint", "do_ssh", "1"], check=True)
-            # Also ensure systemd stop + disable
             subprocess.run(["sudo", "systemctl", "disable", "ssh"], check=True)
             subprocess.run(["sudo", "systemctl", "stop", "ssh"], check=True)
-            return _setup_response(
-                success=True,
-                message='SSH service disabled and stopped.'
-            )
+            return _setup_response(True, 'SSH service disabled and stopped.')
         except subprocess.CalledProcessError as e:
-            return _setup_response(
-                success=False,
-                message=f'Failed to disable/stop SSH: {str(e)}'
-            )
+            return _setup_response(False, f'Failed to disable/stop SSH: {str(e)}')
 
-    # 5) Enable VNC
+    # 5) Enable VNC (updated to handle RealVNC or WayVNC)
     elif scan_str == '$$enablevnc$$':
-        try:
-            # Use raspi-config to enable VNC
-            subprocess.run(["sudo", "raspi-config", "nonint", "do_vnc", "0"], check=True)
-            # Also ensure systemd start + enable
-            subprocess.run(["sudo", "systemctl", "enable", "vncserver-x11-serviced"], check=True)
-            subprocess.run(["sudo", "systemctl", "start", "vncserver-x11-serviced"], check=True)
-            return _setup_response(
-                success=True,
-                message='VNC service enabled and started.'
-            )
-        except subprocess.CalledProcessError as e:
-            return _setup_response(
-                success=False,
-                message=f'Failed to enable/start VNC: {str(e)}'
-            )
+        success, msg = enable_vnc()
+        return _setup_response(success, msg)
 
-    # 6) Disable VNC
+    # 6) Disable VNC (updated to handle RealVNC or WayVNC)
     elif scan_str == '$$disablevnc$$':
-        try:
-            # Use raspi-config to disable VNC
-            subprocess.run(["sudo", "raspi-config", "nonint", "do_vnc", "1"], check=True)
-            # Also ensure systemd stop + disable
-            subprocess.run(["sudo", "systemctl", "disable", "vncserver-x11-serviced"], check=True)
-            subprocess.run(["sudo", "systemctl", "stop", "vncserver-x11-serviced"], check=True)
-            return _setup_response(
-                success=True,
-                message='VNC service disabled and stopped.'
-            )
-        except subprocess.CalledProcessError as e:
-            return _setup_response(
-                success=False,
-                message=f'Failed to disable/stop VNC: {str(e)}'
-            )
+        success, msg = disable_vnc()
+        return _setup_response(success, msg)
 
-    # 7) Wi-Fi JSON Config
+    # 7) Wi-Fi JSON config
     if scan_str.startswith("$$wifi$$"):
         wifi_json_str = scan_str.replace("$$wifi$$", "", 1).strip()
         try:
             wifi_config = json.loads(wifi_json_str)
         except json.JSONDecodeError as e:
-            return _setup_response(
-                success=False,
-                message=f"Invalid Wi-Fi JSON: {str(e)}"
-            )
+            return _setup_response(False, f"Invalid Wi-Fi JSON: {str(e)}")
 
         success, msg = configure_wifi_json(wifi_config)
-        return _setup_response(
-            success=success,
-            message=msg
-        )
+        return _setup_response(success, msg)
 
     # 8) No recognized command
-    return _setup_response(
-        success=True,
-        message=f"Unrecognized setup command: {scan_str}"
-    )
+    return _setup_response(True, f"Unrecognized setup command: {scan_str}")
 
 
 @app.route('/')
@@ -408,9 +399,7 @@ def process_scan():
             'error': 'Scan data too long; potential injection blocked.'
         })
 
-    # ----------------------------------------------------------------
     # Check if we should ENTER Setup Mode
-    # ----------------------------------------------------------------
     if scan_str == '$$setup$$':
         SETUP_MODE = True
         logging.info("SYSTEM: Entered Setup Mode.")
@@ -427,9 +416,7 @@ def process_scan():
             'cpu_unique_id': CPU_UNIQUE_ID
         })
 
-    # ----------------------------------------------------------------
     # If ALREADY in Setup Mode, handle setup commands
-    # ----------------------------------------------------------------
     if SETUP_MODE:
         if scan_str == '$$exit$$':
             SETUP_MODE = False
@@ -440,24 +427,16 @@ def process_scan():
                 'message': 'Exited Setup Mode, normal scanning resumed'
             })
 
-        # Process known or unknown setup commands
         setup_result = handle_setup_command(scan_str)
         return jsonify(setup_result)
 
-    # ----------------------------------------------------------------
-    # Normal scanning mode (NOT in Setup Mode)
-    # ----------------------------------------------------------------
+    # Normal scanning (not in Setup Mode)
     if not scan_str:
-        return jsonify({
-            'success': False,
-            'error': 'No scan data received.'
-        })
+        return jsonify({'success': False, 'error': 'No scan data received.'})
 
-    # Attempt to parse as AAMVA data
     try:
         parsed_data = LicenseParser.parse_aamva(scan_str)
         validation = LicenseParser.validate_license(parsed_data)
-
         response_data = {
             'success': True,
             'name': f"{parsed_data['first_name']} {parsed_data['middle_name']} {parsed_data['last_name']}",
@@ -468,16 +447,11 @@ def process_scan():
             'is_valid': validation['is_valid'],
             'validation_message': get_validation_message(validation),
         }
-
         logging.info(f"Processed normal scan: {response_data}")
         return jsonify(response_data)
-
     except Exception as ex:
         logging.error(f"Error processing scan: {str(ex)}")
-        return jsonify({
-            'success': False,
-            'error': str(ex)
-        })
+        return jsonify({'success': False, 'error': str(ex)})
 
 
 if __name__ == '__main__':
