@@ -91,7 +91,7 @@ sys.excepthook = log_uncaught_exceptions
 SETUP_MODE = False
 
 # App info (Open Source placeholders)
-APP_NAME_VERSION = "Genopti-OS (v0.31) - Open Source"
+APP_NAME_VERSION = "Genopti-OS (v0.35) - Open Source"
 REGISTERED_USER = "N/A"
 COMPANY_NAME = "N/A"
 LOCATION = "N/A"

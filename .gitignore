@@ -16,3 +16,6 @@ env/
 
 # Additional patterns (customize based on your needs)
 *.tmp
+
+# ignore CLAUDE.md
+CLAUDE.md
