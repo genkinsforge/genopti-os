@@ -87,10 +87,31 @@ Run the setup scripts for services and the kiosk UI:
 ```bash
 sudo ./install_genopti-os.sh
 ```
+
 This script:
 - Creates a dedicated system user.
 - Sets up the application directory at `/opt/genopti-os`.
 - Configures and enables a systemd service for the application.
+
+#### Automatic WiFi Setup During Installation
+
+The installation script requires internet access to download necessary packages. If your device is not yet connected to a network, you have two options:
+
+1. **Interactive WiFi Setup:**
+   Run the installation script, and when prompted, enter your WiFi credentials.
+
+2. **Automatic WiFi Setup with Credentials File:**
+   Create a file called `wifi-credentials.txt` in the same directory as the installation script with the following format:
+   ```
+   SSID=your_wifi_network_name
+   PASSWORD=your_wifi_password
+   ```
+   
+   The script will:
+   - Read the WiFi credentials
+   - Configure and connect to your WiFi network
+   - Securely delete the credentials file after setup
+   - Continue with the installation
 
 #### Kiosk UI Setup
 ```bash
@@ -125,6 +146,27 @@ If kiosk mode is enabled, the interface will launch automatically on boot.
   - **Date of Birth**: Ensures the individual meets the age requirement (default: 21 years).
   - **Expiration Date**: Checks license validity.
 - Results, including name, address, and validation status, are displayed on the interface.
+
+### System Configuration via QR Codes
+
+The system can be configured through special QR code commands in setup mode:
+
+- `$$setup$$` - Enter setup mode
+- `$$exit$$` - Exit setup mode
+- `$$serialnumber$${"serial": "XYZ"}` - Update device serial with suffix
+- `$$wifi$${"ssid": "network", "password": "secret", "type": "WPA2", "hidden": false}` - Configure WiFi
+- `$$restartapp$$` - Restart the application
+
+All configuration commands use the format `$$command$$` followed by a JSON object with the necessary parameters.
+
+### Integration with GenOpti-Client
+
+When GenOpti-Client is installed alongside GenOpti-OS, they integrate in the following way:
+
+- GenOpti-OS maintains the device identity in `/etc/device_id`
+- GenOpti-Client reads this device ID to register with the portal
+- GenOpti-OS functions independently when GenOpti-Client is not present
+- When both are present, they provide a complete solution for license scanning with registration capability
 
 ---
 

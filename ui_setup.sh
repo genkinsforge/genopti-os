@@ -41,7 +41,7 @@ xset s noblank
   --autoplay-policy=no-user-gesture-required \
   --start-fullscreen \
   --test-type \
-  "$KIOSK_URL"
+  "http://localhost:5000"
 EOF
 
 chmod +x "$LAUNCH_SCRIPT"

@@ -12,6 +12,7 @@
             flex-direction: column;
             overflow: hidden;
             background-color: white;
+            cursor: none; /* Hide the cursor completely */
         }
 
         .header-section {
@@ -272,8 +273,58 @@
 
         // Input handling
         const inputField = document.getElementById('scanner-input');
-        inputField.focus();
-        document.addEventListener('click', () => inputField.focus());
+        
+        // Focus input field on load and keep it focused
+        function focusInputField() {
+            inputField.focus();
+            // Re-focus after a small delay to handle browser quirks
+            setTimeout(() => inputField.focus(), 100);
+        }
+        
+        // Focus immediately
+        focusInputField();
+        
+        // Focus when document is clicked
+        document.addEventListener('click', focusInputField);
+        
+        // Also focus on any key press anywhere in the document
+        document.addEventListener('keydown', focusInputField);
+        
+        // Re-focus periodically to ensure scanner input is captured
+        setInterval(focusInputField, 1000);
+        
+        // Move cursor to bottom right as a fallback if CSS cursor:none doesn't work
+        function moveCursorToBottomRight(e) {
+            // Get window dimensions
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            
+            // Create a temporary invisible div at the bottom right
+            const tempDiv = document.createElement('div');
+            tempDiv.style.position = 'absolute';
+            tempDiv.style.bottom = '0';
+            tempDiv.style.right = '0';
+            tempDiv.style.width = '1px';
+            tempDiv.style.height = '1px';
+            document.body.appendChild(tempDiv);
+            
+            // Move focus to it and remove
+            tempDiv.focus();
+            document.body.removeChild(tempDiv);
+            
+            // Only prevent default if we have an event object
+            if (e && typeof e.preventDefault === 'function') {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            
+            // Re-focus the input field
+            focusInputField();
+        }
+        
+        // Move cursor on page load and whenever mouse moves
+        document.addEventListener('mousemove', moveCursorToBottomRight, {once: true});
+        window.addEventListener('load', moveCursorToBottomRight);
 
         inputField.addEventListener('input', (e) => {
             if (!scanning) {
@@ -310,17 +361,28 @@
                     showConfiguringWifi();
                 }
 
+                console.log("Sending scan data:", finalData);
+                
                 const resp = await fetch('/process_scan', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ scan_data: finalData })
+                }).catch(networkErr => {
+                    console.error("Network error during fetch:", networkErr);
+                    throw new Error(`Failed to connect to server: ${networkErr.message}`);
                 });
 
                 if (!resp.ok) {
+                    console.error(`HTTP error! status: ${resp.status}`);
                     throw new Error(`HTTP error! status: ${resp.status}`);
                 }
 
-                const result = await resp.json();
+                const result = await resp.json().catch(jsonErr => {
+                    console.error("Error parsing JSON response:", jsonErr);
+                    throw new Error("Invalid server response format");
+                });
+                
+                console.log("Received response:", result);
                 updateDisplay(result);
             } catch (err) {
                 console.error('Error finalizing scan:', err);
@@ -362,7 +424,14 @@
             }
 
             // Handle Wi-Fi configuration success
-            if (currentSetupMode && result.message && result.message.startsWith("Wi-Fi")) {
+            if (currentSetupMode && result.message && result.message.includes("WiFi")) {
+                if (result.requires_restart) {
+                    // Show restart instructions
+                    const setupMessage = document.getElementById('setup-message');
+                    setupMessage.innerHTML = `${result.message}<br><br>${result.instructions.replace(/\n/g, '<br>')}`;
+                    setupMessage.style.color = '#007bff';  // Blue color for information
+                    return;
+                }
                 showCompletedMessage();
                 return;
             }
