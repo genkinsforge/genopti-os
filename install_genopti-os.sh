@@ -277,16 +277,9 @@ Environment=DEBUG_MODE=${DEFAULT_DEBUG_MODE}
 Environment=SCAN_RESET_SECONDS=${DEFAULT_SCAN_RESET_SECONDS}
 Environment=SCAN_INACTIVITY_MS=${DEFAULT_SCAN_INACTIVITY_MS}
 
-# Security Hardening
-CapabilityBoundingSet=
-AmbientCapabilities=
-NoNewPrivileges=true
-ProtectSystem=full
-ProtectHome=true
-PrivateTmp=true
-ProtectControlGroups=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
+# Security Hardening (allowing sudo for WiFi configuration)
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID 
+AmbientCapabilities=CAP_SETUID CAP_SETGID
 
 [Install]
 WantedBy=multi-user.target
