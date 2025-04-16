@@ -19,3 +19,26 @@ env/
 
 # ignore CLAUDE.md
 CLAUDE.md
+
+# Ignore actual WiFi credentials file
+wifi-credentials.txt
+
+# Ignore setup mode flag file
+.setup_mode_active
+
+# Ignore Python environment files if not standard names
+*.venv
+/pyvenv.cfg
+/lib/
+/lib64/
+/include/
+/bin/
+/Scripts/
+
+# Ignore IDE files
+.idea/
+.vscode/
+
+# Ignore OS generated files
+.DS_Store
+Thumbs.db
