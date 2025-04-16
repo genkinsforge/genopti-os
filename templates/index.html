@@ -3,6 +3,7 @@
 <head>
     <title>License Scanner</title>
     <style>
+        /* CSS styles remain the same */
         body {
             margin: 0;
             padding: 0;
@@ -73,7 +74,6 @@
             background: none;
         }
 
-        /* Remove the default background from raw-data-display */
         #raw-data-display {
             font-family: monospace;
             font-size: 0.9em;
@@ -85,8 +85,12 @@
 
         #scanner-input {
             position: absolute;
-            opacity: 0;
-            pointer-events: none;
+            left: -9999px; /* Move off-screen instead of opacity 0 */
+            top: -9999px;
+            width: 1px;
+            height: 1px;
+            /* opacity: 0; */ /* Removed */
+            /* pointer-events: none; */ /* Removed */
         }
 
         /* Normal content */
@@ -184,7 +188,7 @@
     </div>
 
     <div id="content">
-        <input type="text" id="scanner-input" autocomplete="off">
+        <input type="text" id="scanner-input" autocomplete="off" autofocus> <!-- Added autofocus -->
 
         <!-- Normal Mode Content -->
         <div id="normal-content">
@@ -248,15 +252,47 @@
         const resetSecs = parseInt(document.body.dataset.resetSecs || "15", 10);
         const inactivityMs = parseInt(document.body.dataset.inactivityMs || "300", 10);
 
+        // DOM Elements
+        const inputField = document.getElementById('scanner-input');
+        const normalContent = document.getElementById('normal-content');
+        const setupContent = document.getElementById('setup-content');
+        const normalHeader = document.getElementById('normal-header');
+        const setupHeader = document.getElementById('setup-header');
+        // Add other frequently accessed elements if needed
+
         // State tracking
-        let currentSetupMode = false;
+        let currentSetupMode = document.getElementById('setup-header').classList.contains('hidden') ? false : true; // Initial state from template
         let scanBuffer = '';
         let scanTimeout = null;
-        let scanning = false;
         let resetTimer = null;
-        let AWAITING_WIFI_CONFIG = false;
+        let isProcessing = false; // Prevent overlapping scans
 
-        // Initialize date display
+        // --- Initialization ---
+        function initializeApp() {
+            console.log("Initializing App...");
+            updateDate();
+            setInterval(updateDate, 60000); // Update date every minute
+
+            // Ensure input field is focused initially and after interactions
+            focusInputField();
+
+            // Add event listeners
+            inputField.addEventListener('input', handleInput);
+            document.body.addEventListener('click', focusInputField); // Refocus on click anywhere
+
+             // Apply initial state based on template rendering
+            if (document.body.dataset.initialSetupMode === 'true') {
+                 // If template indicates setup mode, force UI update (though it should be correct)
+                 showSetupMode({/* provide necessary initial data if available */});
+            } else {
+                 showNormalMode();
+            }
+
+            console.log(`Debug Mode: ${debugMode}, Reset Secs: ${resetSecs}, Inactivity MS: ${inactivityMs}`);
+            console.log("App Initialized.");
+        }
+
+        // --- Date Display ---
         function updateDate() {
             const now = new Date();
             const opts = { year: 'numeric', month: 'long', day: 'numeric' };
@@ -268,287 +304,253 @@
             document.getElementById('twenty-one-date').textContent =
                 "Must be born before " + cutoff.toLocaleDateString('en-US', opts) + " to be 21+";
         }
-        updateDate();
-        setInterval(updateDate, 60000);
 
-        // Input handling
-        const inputField = document.getElementById('scanner-input');
-        
-        // Focus input field on load and keep it focused
+        // --- Input Handling & Focusing ---
         function focusInputField() {
-            inputField.focus();
-            // Re-focus after a small delay to handle browser quirks
-            setTimeout(() => inputField.focus(), 100);
+            // Don't steal focus if something else is intentionally focused (less likely here, but good practice)
+            // if (document.activeElement !== inputField) {
+                inputField.focus();
+                // console.log("Input field focused."); // Optional: for debugging focus
+            // }
         }
-        
-        // Focus immediately
-        focusInputField();
-        
-        // Focus when document is clicked
-        document.addEventListener('click', focusInputField);
-        
-        // Also focus on any key press anywhere in the document
-        document.addEventListener('keydown', focusInputField);
-        
-        // Re-focus periodically to ensure scanner input is captured
-        setInterval(focusInputField, 1000);
-        
-        // Move cursor to bottom right as a fallback if CSS cursor:none doesn't work
-        function moveCursorToBottomRight(e) {
-            // Get window dimensions
-            const width = window.innerWidth;
-            const height = window.innerHeight;
-            
-            // Create a temporary invisible div at the bottom right
-            const tempDiv = document.createElement('div');
-            tempDiv.style.position = 'absolute';
-            tempDiv.style.bottom = '0';
-            tempDiv.style.right = '0';
-            tempDiv.style.width = '1px';
-            tempDiv.style.height = '1px';
-            document.body.appendChild(tempDiv);
-            
-            // Move focus to it and remove
-            tempDiv.focus();
-            document.body.removeChild(tempDiv);
-            
-            // Only prevent default if we have an event object
-            if (e && typeof e.preventDefault === 'function') {
-                e.preventDefault();
-                e.stopPropagation();
-            }
-            
-            // Re-focus the input field
-            focusInputField();
-        }
-        
-        // Move cursor on page load and whenever mouse moves
-        document.addEventListener('mousemove', moveCursorToBottomRight, {once: true});
-        window.addEventListener('load', moveCursorToBottomRight);
 
-        inputField.addEventListener('input', (e) => {
-            if (!scanning) {
-                scanning = true;
+        function handleInput(e) {
+            // Prevent processing if already handling a scan
+             if (isProcessing) {
+                 console.warn("Input received while processing, ignoring.");
+                 // Clear the input value immediately to prevent buffer buildup
+                 if(e && e.target) e.target.value = '';
+                 return;
+             }
+
+            // Append data from the actual input event
+            const currentInput = e.target.value;
+            if (currentInput) {
+                 scanBuffer += currentInput;
+                 e.target.value = ''; // Clear input immediately after reading
+            }
+            // console.log("Scan buffer:", scanBuffer); // Debug buffer content
+
+            if (!isProcessing) { // Double check before showing message
                 showReadingMessage();
             }
 
-            scanBuffer += e.target.value;
-            inputField.value = '';
-
+            // Reset inactivity timer
             clearTimeout(scanTimeout);
             scanTimeout = setTimeout(() => {
                 finalizeScan(scanBuffer.trim());
-                scanBuffer = '';
-                scanning = false;
+                scanBuffer = ''; // Clear buffer after finalizing
             }, inactivityMs);
-        });
+        }
+
 
         function showReadingMessage() {
             if (!currentSetupMode) {
-                const vm = document.getElementById('validation-message');
-                vm.textContent = "Reading scanning data...";
+                document.getElementById('validation-message').textContent = "Reading scanning data...";
             }
         }
 
+        // --- Scan Processing ---
         async function finalizeScan(finalData) {
-            if (!finalData) {
-                hideReadingMessage();
+            clearTimeout(scanTimeout); // Clear any lingering timeout
+            if (!finalData || isProcessing) {
+                // If no data or already processing, reset UI if needed and exit
+                if (!finalData) hideReadingMessage();
+                isProcessing = false; // Ensure flag is reset
                 return;
             }
 
-            try {
-                if (AWAITING_WIFI_CONFIG) {
-                    showConfiguringWifi();
-                }
+            isProcessing = true; // Set flag to prevent overlaps
+            console.log("Finalizing scan data:", finalData.length > 50 ? finalData.substring(0, 50) + "..." : finalData);
 
-                console.log("Sending scan data:", finalData);
-                
+            // Show configuring wifi animation immediately if applicable (before fetch)
+            // We might need a specific flag/state for this, triggered by the scan command itself.
+            // Let's simplify: the backend response will update the UI state.
+
+            try {
                 const resp = await fetch('/process_scan', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ scan_data: finalData })
-                }).catch(networkErr => {
-                    console.error("Network error during fetch:", networkErr);
-                    throw new Error(`Failed to connect to server: ${networkErr.message}`);
-                });
+                }); // Add basic timeout? .catch for network errors needed
 
                 if (!resp.ok) {
-                    console.error(`HTTP error! status: ${resp.status}`);
-                    throw new Error(`HTTP error! status: ${resp.status}`);
+                    // Try to get error text from response if possible
+                    let errorMsg = `HTTP error! status: ${resp.status}`;
+                    try {
+                         const errData = await resp.json();
+                         errorMsg = errData.error || errData.message || errorMsg;
+                    } catch (e) { /* Ignore if response isn't valid JSON */ }
+                    throw new Error(errorMsg);
                 }
 
-                const result = await resp.json().catch(jsonErr => {
-                    console.error("Error parsing JSON response:", jsonErr);
-                    throw new Error("Invalid server response format");
-                });
-                
+                const result = await resp.json();
                 console.log("Received response:", result);
                 updateDisplay(result);
+
             } catch (err) {
                 console.error('Error finalizing scan:', err);
-                showError(err.message || 'Error finalizing scan data');
+                showError(err.message || 'Failed to process scan data');
+            } finally {
+                 isProcessing = false; // Reset flag after processing (success or error)
+                 focusInputField(); // Ensure focus returns after processing
             }
         }
 
+        // --- UI Updates ---
         function updateDisplay(result) {
-            // Check if we need to reload the page
+            clearTimeout(resetTimer); // Clear previous reset timer on new data
+
+            // Handle page reload command
             if (result.needs_reload) {
-                document.getElementById('setup-message').textContent = 'Restarting application...';
-                // Wait a moment for the backend to restart
-                setTimeout(() => {
-                    // Try to reload, with exponential backoff
-                    tryReload(1);
-                }, 2000);
+                showSetupMessage('Restarting application...', false);
+                setTimeout(() => tryReload(1), 2000); // Start reload attempts
                 return;
             }
 
-            // Handle setup mode transitions
-            if (result.setup_mode === true) {
-                currentSetupMode = true;
-                showSetupMode(result);
-                return;
+            // Handle setup mode state change
+            if (result.setup_mode === true && !currentSetupMode) {
+                 currentSetupMode = true;
+                 showSetupMode(result); // Update setup UI
+                 showSetupMessage(result.message || 'Entered Setup Mode', result.success);
+                 return;
+            } else if (result.setup_mode === false && currentSetupMode) {
+                 currentSetupMode = false;
+                 showNormalMode(); // Switch to normal UI
+                 // Don't show a message here, clearScreen handles it
+                 return;
             }
 
-            if (result.setup_mode === false) {
-                currentSetupMode = false;
-                showNormalMode();
-                return;
-            }
-
-            // Handle normal scanning results
-            hideReadingMessage();
-
-            if (!result.success) {
-                showError(result.error || 'Error processing scan');
-                return;
-            }
-
-            // Handle Wi-Fi configuration success
-            if (currentSetupMode && result.message && result.message.includes("WiFi")) {
-                if (result.requires_restart) {
-                    // Show restart instructions
-                    const setupMessage = document.getElementById('setup-message');
-                    setupMessage.innerHTML = `${result.message}<br><br>${result.instructions.replace(/\n/g, '<br>')}`;
-                    setupMessage.style.color = '#007bff';  // Blue color for information
-                    return;
-                }
-                showCompletedMessage();
-                return;
-            }
-
-            const nc = document.getElementById('normal-content');
-            nc.className = result.is_valid ? 'valid' : 'invalid';
-
-            document.getElementById('name-display').textContent = "Name: " + (result.name || "");
-            document.getElementById('address-display').textContent = "Address: " + (result.address || "");
-            document.getElementById('dob-display').textContent = "Date of Birth: " + (result.dob || "");
-            document.getElementById('issue-date-display').textContent = "Issue Date: " + (result.issue_date || "");
-            document.getElementById('expiration-display').textContent = "License Expiration: " + (result.expiration || "");
-            document.getElementById('validation-message').textContent = result.validation_message || "";
-
-            // Show raw data in debug mode
-            if (debugMode) {
-                document.getElementById('raw-data-display').textContent = result.raw_data || "";
-            }
-
-            if (!currentSetupMode && resetSecs > 0) {
-                clearTimeout(resetTimer);
-                resetTimer = setTimeout(clearScreen, resetSecs * 1000);
+            // Handle updates within the current mode
+            if (currentSetupMode) {
+                // Update specific setup fields if necessary (e.g., IP after WiFi config)
+                updateSetupInfo(result);
+                showSetupMessage(result.message || '', result.success);
+            } else {
+                 hideReadingMessage(); // Clear "Reading..." message
+                 if (!result.success) {
+                     showError(result.error || 'Error processing scan');
+                 } else {
+                     displayNormalResult(result);
+                     // Set reset timer only for successful normal scans
+                     if (resetSecs > 0) {
+                         resetTimer = setTimeout(clearScreen, resetSecs * 1000);
+                     }
+                 }
             }
         }
 
-        function showSetupMode(result) {
-            // Hide normal mode elements
-            document.getElementById('normal-header').classList.add('hidden');
-            document.getElementById('normal-content').classList.add('hidden');
+         function displayNormalResult(result) {
+             const nc = document.getElementById('normal-content');
+             nc.className = result.is_valid ? 'valid' : 'invalid'; // Use class for background
 
-            // Show setup mode elements
-            document.getElementById('setup-header').classList.remove('hidden');
-            document.getElementById('setup-content').classList.remove('hidden');
+             document.getElementById('name-display').textContent = "Name: " + (result.name || "N/A");
+             document.getElementById('address-display').textContent = "Address: " + (result.address || "N/A");
+             document.getElementById('dob-display').textContent = "Date of Birth: " + (result.dob || "N/A");
+             document.getElementById('issue-date-display').textContent = "Issue Date: " + (result.issue_date || "N/A");
+             document.getElementById('expiration-display').textContent = "License Expiration: " + (result.expiration || "N/A");
+             document.getElementById('validation-message').textContent = result.validation_message || "";
 
-            // Update setup information
-            document.getElementById('setup-system-name').textContent = result.system_name || 'N/A';
-            document.getElementById('setup-registered-user').textContent = result.registered_user || 'N/A';
-            document.getElementById('setup-company-name').textContent = result.company_name || 'N/A';
-            document.getElementById('setup-location').textContent = result.location || 'N/A';
-            document.getElementById('setup-display-serial').textContent = result.display_serial || 'N/A';
-            document.getElementById('setup-cpu-id').textContent = result.cpu_unique_id || 'N/A';
+             // Show raw data only if debug mode is explicitly enabled
+             const rawDataEl = document.getElementById('raw-data-display');
+             if (debugMode && result.raw_data) {
+                 rawDataEl.textContent = "Raw Data:\n" + result.raw_data;
+                 rawDataEl.style.display = 'block';
+             } else {
+                 rawDataEl.textContent = '';
+                 rawDataEl.style.display = 'none';
+             }
+         }
 
-            // Update IP addresses
-            const ipList = document.getElementById('setup-ip-list');
-            ipList.innerHTML = '';
-            if (result.ips) {
-                Object.entries(result.ips).forEach(([iface, ip]) => {
-                    const li = document.createElement('li');
-                    li.textContent = `${iface}: ${ip}`;
-                    ipList.appendChild(li);
-                });
-            }
-
-            document.getElementById('setup-message').textContent = result.message || '';
+        function showSetupMode(initialData = {}) {
+            console.log("Switching to Setup Mode UI");
+            normalHeader.classList.add('hidden');
+            normalContent.classList.add('hidden');
+            setupHeader.classList.remove('hidden');
+            setupContent.classList.remove('hidden');
+            currentSetupMode = true; // Ensure state matches UI
+            updateSetupInfo(initialData); // Populate with any initial data
+            clearTimeout(resetTimer); // No auto-reset in setup mode
+            focusInputField();
         }
 
         function showNormalMode() {
-            // Show normal mode elements
-            document.getElementById('normal-header').classList.remove('hidden');
-            document.getElementById('normal-content').classList.remove('hidden');
-
-            // Hide setup mode elements
-            document.getElementById('setup-header').classList.add('hidden');
-            document.getElementById('setup-content').classList.add('hidden');
-
-            clearScreen();
+            console.log("Switching to Normal Mode UI");
+            setupHeader.classList.add('hidden');
+            setupContent.classList.add('hidden');
+            normalHeader.classList.remove('hidden');
+            normalContent.classList.remove('hidden');
+            currentSetupMode = false; // Ensure state matches UI
+            clearScreen(); // Clear fields when switching back
+            focusInputField();
         }
 
+         function updateSetupInfo(result) {
+            // Only update if we are actually in setup mode
+            if (!currentSetupMode) return;
+
+             // Update dynamic fields from the result object
+             if (result.system_name) document.getElementById('setup-system-name').textContent = result.system_name;
+             if (result.registered_user) document.getElementById('setup-registered-user').textContent = result.registered_user;
+             if (result.company_name) document.getElementById('setup-company-name').textContent = result.company_name;
+             if (result.location) document.getElementById('setup-location').textContent = result.location;
+             if (result.display_serial) document.getElementById('setup-display-serial').textContent = result.display_serial;
+             if (result.cpu_unique_id) document.getElementById('setup-cpu-id').textContent = result.cpu_unique_id;
+
+             // Update IP addresses list
+             if (result.ips) {
+                 const ipList = document.getElementById('setup-ip-list');
+                 ipList.innerHTML = ''; // Clear previous list
+                 if (typeof result.ips === 'object' && Object.keys(result.ips).length > 0) {
+                     Object.entries(result.ips).forEach(([iface, ip]) => {
+                         const li = document.createElement('li');
+                         li.textContent = `${iface}: ${ip}`;
+                         ipList.appendChild(li);
+                     });
+                 } else {
+                     ipList.innerHTML = '<li>No active non-loopback interfaces found.</li>';
+                 }
+             }
+         }
+
+         function showSetupMessage(msg, success = true) {
+             if (!currentSetupMode) return;
+             const msgEl = document.getElementById('setup-message');
+             msgEl.textContent = msg;
+             msgEl.style.color = success ? 'green' : 'red';
+         }
+
+
         function hideReadingMessage() {
-            if (!currentSetupMode) {
-                const vm = document.getElementById('validation-message');
-                if (vm.textContent === "Reading scanning data...") {
-                    vm.textContent = "";
-                }
-            }
+            // Only clear the message if it's the "Reading..." one
+             const vm = document.getElementById('validation-message');
+             if (!currentSetupMode && vm.textContent === "Reading scanning data...") {
+                vm.textContent = "";
+             }
         }
 
         function showError(msg) {
-            if (currentSetupMode) {
-                document.getElementById('setup-message').textContent = "ERROR: " + msg;
-            } else {
-                const nc = document.getElementById('normal-content');
-                nc.className = 'invalid';
-                clearFields();
-                document.getElementById('validation-message').textContent = "ERROR: " + msg;
-            }
+             console.error("Displaying Error:", msg);
+             hideReadingMessage(); // Ensure "Reading..." is cleared
+             if (currentSetupMode) {
+                 showSetupMessage("ERROR: " + msg, false);
+             } else {
+                 normalContent.className = 'invalid'; // Set background to error state
+                 clearFields(); // Clear data fields
+                 document.getElementById('validation-message').textContent = "ERROR: " + msg;
+             }
+             clearTimeout(resetTimer); // Stop reset timer on error
         }
 
-        function showConfiguringWifi() {
-            const wifiStatus = document.getElementById('setup-wifi-status');
-            const configuringDiv = document.getElementById('wifi-configuring');
-            const completedDiv = document.getElementById('wifi-completed');
-
-            wifiStatus.textContent = "";
-            completedDiv.classList.add('hidden');
-            configuringDiv.classList.remove('hidden');
-            inputField.disabled = true;
-        }
-
-        function showCompletedMessage() {
-            const configuringDiv = document.getElementById('wifi-configuring');
-            const completedDiv = document.getElementById('wifi-completed');
-
-            configuringDiv.classList.add('hidden');
-            completedDiv.classList.remove('hidden');
-
-            setTimeout(() => {
-                completedDiv.classList.add('hidden');
-                inputField.disabled = false;
-                AWAITING_WIFI_CONFIG = false;
-            }, 1000);
-        }
-
+        // --- Screen Clearing ---
         function clearScreen() {
-            const nc = document.getElementById('normal-content');
-            nc.className = '';
-            clearFields();
+            console.log("Clearing screen (Normal Mode)");
+            if (!currentSetupMode) {
+                normalContent.className = ''; // Reset background
+                clearFields();
+            }
+            clearTimeout(resetTimer); // Clear any pending reset
+            focusInputField(); // Ensure focus returns after clearing
         }
 
         function clearFields() {
@@ -558,32 +560,42 @@
             document.getElementById('issue-date-display').textContent = "";
             document.getElementById('expiration-display').textContent = "";
             document.getElementById('validation-message').textContent = "";
-            document.getElementById('raw-data-display').textContent = "";
+            const rawDataEl = document.getElementById('raw-data-display');
+            rawDataEl.textContent = "";
+            rawDataEl.style.display = 'none';
         }
 
+        // --- Application Restart Handling ---
         function tryReload(attempt) {
             const maxAttempts = 5;
-            const baseDelay = 1000; // 1 second
+            const baseDelay = 1500; // Slightly longer base delay
 
-            fetch('/').then(response => {
-                if (response.ok) {
-                    window.location.reload();
-                } else {
-                    throw new Error('Server not ready');
-                }
-            }).catch(error => {
-                if (attempt < maxAttempts) {
-                    // Exponential backoff
-                    const delay = baseDelay * Math.pow(2, attempt - 1);
-                    document.getElementById('setup-message').textContent = 
-                        `Waiting for server... (attempt ${attempt}/${maxAttempts})`;
-                    setTimeout(() => tryReload(attempt + 1), delay);
-                } else {
-                    document.getElementById('setup-message').textContent = 
-                        'Server restart failed. Please refresh manually.';
-                }
-            });
+            fetch('/') // Check if the server is back up
+                .then(response => {
+                    if (response.ok) {
+                        console.log("Server is up, reloading page.");
+                        window.location.reload();
+                    } else {
+                        // Server might be up but returning an error temporarily
+                        throw new Error(`Server responded with status ${response.status}`);
+                    }
+                })
+                .catch(error => {
+                    console.warn(`Reload attempt ${attempt} failed: ${error.message}`);
+                    if (attempt < maxAttempts) {
+                        const delay = baseDelay * Math.pow(2, attempt - 1);
+                        showSetupMessage(`Waiting for server... (attempt ${attempt}/${maxAttempts})`, false);
+                        setTimeout(() => tryReload(attempt + 1), delay);
+                    } else {
+                        showSetupMessage('Server restart failed. Please refresh manually.', false);
+                    }
+                });
         }
+
+        // --- Start the application ---
+        // Use DOMContentLoaded to ensure the DOM is ready before running scripts
+        document.addEventListener('DOMContentLoaded', initializeApp);
+
     </script>
 </body>
 </html>

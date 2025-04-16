@@ -3,6 +3,13 @@
 # Exit immediately if a command exits with a non-zero status
 set -e
 
+# ANSI color codes for better readability
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
 # Variables
 SERVICE_USER="genopti-svc"
 SERVICE_GROUP="genopti-svc"
@@ -10,305 +17,283 @@ APP_DIR="/opt/genopti-os"
 VENV_DIR="$APP_DIR/venv"
 SERVICE_NAME="genopti-os"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-REQUIREMENTS_FILE="$APP_DIR/requirements.txt"
 APP_SCRIPT="$APP_DIR/app.py"
-WIFI_CREDENTIALS_FILE="wifi-credentials.txt"
+PYTHON_EXEC="$VENV_DIR/bin/python" # Define python executable path
 
-# Default Environment Variable Values
+# Default Environment Variable Values from systemd unit file
 DEFAULT_DEBUG_MODE="0"            # 0=normal mode, 1=debug
 DEFAULT_SCAN_RESET_SECONDS="15"   # Time in seconds before clearing the screen
 DEFAULT_SCAN_INACTIVITY_MS="300"  # Inactivity timeout in ms before finalizing the scan
 
+# Polkit Variables
+POLKIT_RULE_DIR="/etc/polkit-1/rules.d"
+POLKIT_RULE_FILE_NAME="46-genopti-wifi-manage.rules" # Specific name for our rule
+POLKIT_RULE_PATH="$POLKIT_RULE_DIR/$POLKIT_RULE_FILE_NAME"
+
 # --[ Root Check ]------------------------------------------------------------
 if [[ $EUID -ne 0 ]]; then
-   echo "This script must be run as root."
+   echo -e "${RED}This script must be run as root.${NC}"
    exit 1
 fi
 
-echo "Installing $SERVICE_NAME..."
+echo -e "${BLUE}Installing $SERVICE_NAME...${NC}"
 
-# --[ WiFi Setup ]------------------------------------------------------------
-configure_wifi() {
-    local SSID="$1"
-    local PASSWORD="$2"
-
-    echo "Configuring WiFi for SSID: $SSID"
-
-    # Check if NetworkManager is available
-    if command -v nmcli &> /dev/null; then
-        echo "Using NetworkManager to configure WiFi..."
-        
-        # Connect to WiFi using nmcli
-        if nmcli device wifi connect "$SSID" password "$PASSWORD"; then
-            echo "WiFi connected successfully using NetworkManager!"
-            return 0
-        else
-            echo "Failed to connect using NetworkManager. Trying wpa_supplicant method..."
-        fi
-    fi
-
-    # Fallback to wpa_supplicant method
-    echo "Using wpa_supplicant method to configure WiFi..."
-    
-    # Identify wireless interface
-    WIRELESS_INTERFACE=$(ip -br link | grep -Eo 'wlan[0-9]' | head -n 1)
-    if [ -z "$WIRELESS_INTERFACE" ]; then
-        echo "No wireless interface found. Using default wlan0."
-        WIRELESS_INTERFACE="wlan0"
-    fi
-    
-    echo "Using wireless interface: $WIRELESS_INTERFACE"
-    
-    # Create wpa_supplicant.conf
-    cat > /etc/wpa_supplicant/wpa_supplicant.conf << EOF
-ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
-update_config=1
-country=US
-
-network={
-    ssid="$SSID"
-    psk="$PASSWORD"
-    key_mgmt=WPA-PSK
-}
-EOF
-
-    # Restart wireless interface
-    echo "Restarting wireless interface..."
-    wpa_cli -i "$WIRELESS_INTERFACE" reconfigure || true
-    
-    # Additional restart methods that might help
-    systemctl restart wpa_supplicant.service || true
-    ifconfig "$WIRELESS_INTERFACE" down && ifconfig "$WIRELESS_INTERFACE" up || true
-
-    # Wait a moment for connection
-    echo "Waiting for WiFi connection..."
-    sleep 10
-
-    # Check connection
-    if ping -c 1 8.8.8.8 > /dev/null 2>&1; then
-        echo "WiFi connected successfully!"
-        return 0
-    else
-        echo "WiFi connection might not be established. Continuing installation..."
-        return 1
-    fi
-}
-
-# Check if WiFi credentials file exists
-if [ -f "$WIFI_CREDENTIALS_FILE" ]; then
-    echo "Found WiFi credentials file. Configuring WiFi..."
-
-    # Read credentials
-    WIFI_SSID=$(grep -oP '^SSID=\K.*' "$WIFI_CREDENTIALS_FILE")
-    WIFI_PASSWORD=$(grep -oP '^PASSWORD=\K.*' "$WIFI_CREDENTIALS_FILE")
-
+# --[ Initial WiFi Check/Setup Attempt (Optional) ]---------------------------
+if [ -f "wifi-credentials.txt" ]; then
+    echo "Found WiFi credentials file (wifi-credentials.txt)."
+    chmod 600 "wifi-credentials.txt"
+    WIFI_SSID=$(grep -oP '^SSID=\K.*' "wifi-credentials.txt" || true)
+    WIFI_PASSWORD=$(grep -oP '^PASSWORD=\K.*' "wifi-credentials.txt" || true)
     if [ -n "$WIFI_SSID" ] && [ -n "$WIFI_PASSWORD" ]; then
-        configure_wifi "$WIFI_SSID" "$WIFI_PASSWORD"
-
-        # Remove credentials file for security
-        echo "Removing WiFi credentials file for security..."
-        shred -u "$WIFI_CREDENTIALS_FILE"
-    else
-        echo "WiFi credentials file format incorrect. Expected SSID=xxxx and PASSWORD=yyyy."
-        echo "Continuing without WiFi setup."
-    fi
-else
-    # If no credentials file, prompt for credentials
-    echo "No WiFi credentials file found."
-    read -p "Do you want to set up WiFi now? (y/n): " SETUP_WIFI
-
-    if [[ "$SETUP_WIFI" =~ ^[Yy]$ ]]; then
-        read -p "Enter WiFi SSID: " WIFI_SSID
-        read -sp "Enter WiFi Password: " WIFI_PASSWORD
-        echo
-
-        if [ -n "$WIFI_SSID" ] && [ -n "$WIFI_PASSWORD" ]; then
-            configure_wifi "$WIFI_SSID" "$WIFI_PASSWORD"
+        echo "Attempting to configure WiFi using NetworkManager (nmcli)..."
+        if command -v nmcli &> /dev/null; then
+            # We need root privileges here during install if using this method
+            if nmcli device wifi connect "$WIFI_SSID" password "$WIFI_PASSWORD"; then
+                echo -e "${GREEN}WiFi connected successfully via nmcli during installation!${NC}"
+                echo "Removing temporary wifi-credentials.txt for security..."
+                shred -u "wifi-credentials.txt" || rm -f "wifi-credentials.txt"
+            else
+                echo -e "${YELLOW}WARN: Failed to connect using nmcli during installation (may require network config later).${NC}"
+            fi
         else
-            echo "Invalid WiFi credentials. Continuing without WiFi setup."
+            echo -e "${YELLOW}WARN: nmcli command not found. Cannot attempt WiFi setup during installation.${NC}"
         fi
     else
-        echo "Skipping WiFi setup."
+        echo -e "${YELLOW}WARN: wifi-credentials.txt format incorrect or incomplete.${NC}"
     fi
+elif [ -f "wifi-credentials.txt.template" ]; then
+     echo "INFO: wifi-credentials.txt not found. Copy template to configure."
+else
+     echo "INFO: No WiFi credentials file or template found. Skipping initial WiFi setup."
 fi
 
 # --[ Create or update system user ]------------------------------------------
-#  - system user
-#  - no home directory
-#  - no shell (for security)
-if ! id "$SERVICE_USER" &>/dev/null; then
-    echo "Creating user: $SERVICE_USER..."
-    useradd --system \
-            --no-create-home \
-            --shell /usr/sbin/nologin \
-            "$SERVICE_USER"
-fi
+if ! getent group "$SERVICE_GROUP" > /dev/null; then echo "Creating system group: $SERVICE_GROUP..."; groupadd --system "$SERVICE_GROUP"; fi
+if ! id "$SERVICE_USER" &>/dev/null; then echo "Creating system user: $SERVICE_USER..."; useradd --system --no-create-home --shell /usr/sbin/nologin --gid "$SERVICE_GROUP" "$SERVICE_USER"; echo "User $SERVICE_USER created."; else echo "User $SERVICE_USER already exists."; usermod -g "$SERVICE_GROUP" "$SERVICE_USER"; fi
+echo "Adding $SERVICE_USER to 'netdev' group for NetworkManager permissions (may not be sufficient for modification)..."
+usermod -a -G netdev "$SERVICE_USER" || echo -e "${YELLOW}WARN: Failed to add $SERVICE_USER to netdev group.${NC}"
 
-# Add user to netdev group to allow WiFi management
-echo "Adding $SERVICE_USER to netdev group for WiFi management..."
-usermod -a -G netdev "$SERVICE_USER"
+# --[ Remove dangerous sudoers configuration ]--------------------------------
+SUDOERS_FILE="/etc/sudoers.d/$SERVICE_USER"
+if [ -f "$SUDOERS_FILE" ]; then echo "Removing potentially insecure sudoers file: $SUDOERS_FILE"; rm -f "$SUDOERS_FILE"; fi
 
-# Create sudoers file for WiFi configuration permissions
-echo "Setting up sudo permissions for WiFi configuration..."
-cat > "/etc/sudoers.d/$SERVICE_USER" <<SUDOERS
-# Allow $SERVICE_USER to manage WiFi without password
-$SERVICE_USER ALL=(ALL) NOPASSWD: /sbin/wpa_cli -i wlan0 reconfigure
-$SERVICE_USER ALL=(ALL) NOPASSWD: /sbin/wpa_cli -i wlan* reconfigure
-$SERVICE_USER ALL=(ALL) NOPASSWD: /bin/cp /tmp/tmp* /etc/wpa_supplicant/wpa_supplicant.conf
-$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/nmcli device wifi connect *
-$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/nmcli
-$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/nmcli device wifi connect *
-$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/nmcli device wifi rescan
-$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/nmcli device wifi list
-$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/nmcli connection
-$SERVICE_USER ALL=(ALL) NOPASSWD: /usr/bin/nmcli connection delete *
-$SERVICE_USER ALL=(ALL) NOPASSWD: /bin/systemctl restart NetworkManager.service
-$SERVICE_USER ALL=(ALL) NOPASSWD: /bin/systemctl restart wpa_supplicant.service
-SUDOERS
-chmod 440 "/etc/sudoers.d/$SERVICE_USER"
-
-# --[ Create or clean application directory ]----------------------------------
-if [ ! -d "$APP_DIR" ]; then
-    echo "Creating application directory at $APP_DIR..."
-    mkdir -p "$APP_DIR"
+# --[ Polkit Setup for NetworkManager Permissions ]---------------------------
+echo -e "${BLUE}Setting up Polkit rule for NetworkManager access...${NC}"
+# Check if Polkit seems to be available
+if ! command -v pkexec &> /dev/null && ! systemctl list-units --type=service | grep -q 'polkit.service'; then
+  echo -e "${YELLOW}WARN: Polkit (pkexec/polkit.service) not detected. WiFi setup via QR code might fail due to permissions.${NC}"
 else
-    echo "Cleaning application directory for reinstallation..."
-    # Preserve any user configuration files if they exist
-    if [ -f "$APP_DIR/config.json" ]; then
-        echo "Backing up existing config.json..."
-        cp "$APP_DIR/config.json" "/tmp/genopti-config-backup.json"
-    fi
-    
-    # Remove old files but keep the directory
-    find "$APP_DIR" -mindepth 1 -not -path "$APP_DIR/venv*" -delete
-    
-    # Restore configuration if backed up
-    if [ -f "/tmp/genopti-config-backup.json" ]; then
-        echo "Restoring config.json..."
-        mkdir -p "$APP_DIR"
-        cp "/tmp/genopti-config-backup.json" "$APP_DIR/config.json"
-        rm "/tmp/genopti-config-backup.json"
-    fi
+  # Create the rule directory if it doesn't exist
+  mkdir -p "$POLKIT_RULE_DIR"
+
+  # Create the Polkit rule file using a here document
+  echo "Creating Polkit rule at $POLKIT_RULE_PATH..."
+  cat > "$POLKIT_RULE_PATH" << EOF
+/*
+ * Allow the '$SERVICE_USER' user (running the Genopti-OS application)
+ * to manage system-level network connections via NetworkManager without password.
+ * This is needed for the application to connect to new WiFi networks
+ * using nmcli when triggered (e.g., by a QR code in setup mode).
+ */
+polkit.addRule(function(action, subject) {
+    if ((action.id == "org.freedesktop.NetworkManager.settings.modify.system" ||
+         action.id == "org.freedesktop.NetworkManager.network-control") &&
+        subject.user === "$SERVICE_USER") {
+            // Grant permission without asking for password
+            // polkit.log("Granting NetworkManager permissions to $SERVICE_USER for action: " + action.id); // Uncomment for debugging polkit logs
+            return polkit.Result.YES;
+    }
+});
+EOF
+
+  # Set correct ownership and permissions for the rule file
+  echo "Setting ownership and permissions for Polkit rule..."
+  chown root:root "$POLKIT_RULE_PATH"
+  chmod 644 "$POLKIT_RULE_PATH"
+  echo "Polkit rule created and permissions set."
+
+  # Reload Polkit service to apply the new rule
+  echo "Reloading Polkit service..."
+  if systemctl reload polkit.service; then
+      echo "Polkit service reloaded successfully."
+  elif systemctl restart polkit.service; then
+      echo "Polkit service restarted successfully (reload failed)."
+  else
+      echo -e "${YELLOW}WARN: Failed to reload or restart polkit.service. Rule may not be active until next reboot.${NC}"
+  fi
+  sleep 1 # Brief pause to allow service reload
+fi
+# --[ End Polkit Setup ]------------------------------------------------------
+
+# --[ Stop Service Before Cleaning ]-------------------------------------------
+if systemctl is-active --quiet "$SERVICE_NAME"; then echo "Stopping existing $SERVICE_NAME service..."; systemctl stop "$SERVICE_NAME".service || true; fi
+if systemctl is-enabled --quiet "$SERVICE_NAME"; then echo "Disabling $SERVICE_NAME service temporarily..."; systemctl disable "$SERVICE_NAME".service || true; fi
+
+# --[ Create or clean application directory (Force Clean Venv) ]---------------
+if [ ! -d "$APP_DIR" ]; then echo "Creating application directory at $APP_DIR..."; mkdir -p "$APP_DIR"; else
+    echo "Cleaning application directory $APP_DIR for reinstallation..."
+    LOG_BACKUP_DIR="/tmp/genopti-logs-backup"
+    if [ -d "$APP_DIR/logs" ]; then echo "Backing up logs to $LOG_BACKUP_DIR..."; rm -rf "$LOG_BACKUP_DIR"; mv "$APP_DIR/logs" "$LOG_BACKUP_DIR"; fi
+    echo "Removing existing virtual environment $VENV_DIR..."; rm -rf "$VENV_DIR"
+    find "$APP_DIR" -mindepth 1 -maxdepth 1 -path "$VENV_DIR" -prune -o -exec rm -rf {} \;
 fi
 
-# --[ Copy application files to the target directory ]------------------------
+# --[ Copy application files explicitly ]-------------------------------------
 echo "Copying application files to $APP_DIR..."
-cp -r ./* "$APP_DIR"
+if [ ! -f "app.py" ] || [ ! -f "requirements.txt" ] || [ ! -d "templates" ]; then echo -e "${RED}ERROR: Core application files missing.${NC}"; exit 1; fi
+cp app.py "$APP_DIR/"; cp requirements.txt "$APP_DIR/"; cp -r templates "$APP_DIR/"
+[ -f README.md ] && cp README.md "$APP_DIR/"; [ -f LICENSE ] && cp LICENSE "$APP_DIR/"
+[ -f wifi-credentials.txt.template ] && cp wifi-credentials.txt.template "$APP_DIR/"
+mkdir -p "$APP_DIR/logs"
+
+# --[ Ensure app.py has Shebang ]---------------------------------------------
+echo "Ensuring $APP_SCRIPT has correct shebang..."
+if ! head -n 1 "$APP_SCRIPT" | grep -q -E '^#!/usr/bin/env python|^#!/usr/bin/python'; then echo -e "#!/usr/bin/env python3\n$(cat "$APP_SCRIPT")" > "$APP_SCRIPT"; echo "Added #!/usr/bin/env python3 shebang to $APP_SCRIPT"; fi
 
 # --[ Install system packages for Python ]------------------------------------
-echo "Installing Python dependencies..."
+echo "Updating package list and installing/verifying Python dependencies..."
 apt-get update
-apt-get install -y python3 python3-venv python3-pip
+# Ensure network-manager and policykit-1 are included for dependencies
+REQUIRED_PKGS="python3 python3-venv python3-pip network-manager policykit-1"
+INSTALL_PKGS=""; for PKG in $REQUIRED_PKGS; do if ! dpkg -s "$PKG" &> /dev/null; then echo "Package $PKG not found, scheduling for installation."; INSTALL_PKGS="$INSTALL_PKGS $PKG"; else echo "Package $PKG already installed."; fi; done
+if [ -n "$INSTALL_PKGS" ]; then echo "Installing missing packages: $INSTALL_PKGS"; apt-get install -y $INSTALL_PKGS; else echo "All required system packages are already installed."; fi
 
-# --[ Create/Update Python virtual environment ]------------------------------
-# Clean up existing venv if it exists to allow for clean reinstallation
-if [ -d "$VENV_DIR" ]; then
-    echo "Removing existing virtual environment for clean reinstall..."
-    rm -rf "$VENV_DIR"
-fi
-
-echo "Creating virtual environment in $VENV_DIR..."
-python3 -m venv "$VENV_DIR"
+# --[ Create/Update Python virtual environment (USING --copies) ]-------------
+echo "Removing existing virtual environment $VENV_DIR (if any)..."
+rm -rf "$VENV_DIR"
+echo "Creating new Python virtual environment in $VENV_DIR using --copies..."
+# *** Use the --copies flag ***
+python3 -m venv --copies "$VENV_DIR"
+if [ $? -ne 0 ]; then echo -e "${RED}ERROR: Failed to create virtual environment with --copies.${NC}"; exit 1; fi
+echo "Virtual environment created successfully with copies."
 
 echo "Activating virtual environment and installing dependencies..."
 source "$VENV_DIR/bin/activate"
-pip install --upgrade pip
-
-# Handle externally-managed-environment error by using --break-system-packages if needed
-if pip install -r "$REQUIREMENTS_FILE" 2>&1 | grep -q "externally-managed-environment"; then
-    echo "Detected externally-managed-environment restriction, using workaround..."
-    pip install --break-system-packages -r "$REQUIREMENTS_FILE"
-else
-    echo "Standard pip install completed successfully."
-fi
+echo "Upgrading pip within virtual environment (using --break-system-packages)..."
+pip install --upgrade pip --break-system-packages || echo -e "${YELLOW}WARN: Failed to upgrade pip. Continuing...${NC}"
+REQUIREMENTS_FILE_PATH="$APP_DIR/requirements.txt"
+echo "Installing Python dependencies using pip (with --break-system-packages)..."
+pip install --break-system-packages -r "$REQUIREMENTS_FILE_PATH"
+if [ $? -ne 0 ]; then echo -e "${RED}ERROR: Failed to install Python dependencies.${NC}"; deactivate; exit 1; fi
+echo "Python dependencies installed successfully."
 deactivate
 
-# --[ Adjust ownership to new service user ]----------------------------------
-# This ensures the service user can read and execute files as needed.
+# --[ Adjust ownership and permissions ]--------------------------------------
 echo "Setting ownership of $APP_DIR to $SERVICE_USER:$SERVICE_GROUP..."
 chown -R "$SERVICE_USER":"$SERVICE_GROUP" "$APP_DIR"
-chmod -R 750 "$APP_DIR"
+
+echo "Setting permissions for $APP_DIR..."
+# Dirs: rwxr-x--- (750)
+# Files: rw-r----- (640)
+find "$APP_DIR" -type d -exec chmod 750 {} \;
+find "$APP_DIR" -type f -exec chmod 640 {} \;
+
+# Grant execute permission specifically to the application script
+if [ -f "$APP_SCRIPT" ]; then chmod 750 "$APP_SCRIPT"; echo "Execute permission granted for $APP_SCRIPT"; fi
+
+# Grant execute permissions for the venv bin directory and its contents
+if [ -d "$VENV_DIR/bin" ]; then
+    echo "Setting execute permissions (ug+x) on $VENV_DIR/bin and its contents..."
+    chmod 750 "$VENV_DIR/bin" # Ensure bin dir is traversable/executable
+    find "$VENV_DIR/bin/" -type f -exec chmod ug+x {} \; # Ensure files inside are executable
+    echo "Execute permissions set for $VENV_DIR/bin contents."
+else
+    echo -e "${YELLOW}WARN: $VENV_DIR/bin directory not found within venv.${NC}"
+fi
+if [ -d "$APP_DIR/logs" ]; then chmod g+w "$APP_DIR/logs"; echo "Write permissions granted to group for $APP_DIR/logs"; fi
+echo "File permissions set."
+
+# --[ Permission Verification ]-----------------------------------------------
+echo "Verifying permissions for Python executable..."
+if [ -f "$PYTHON_EXEC" ]; then
+    ls -l "$PYTHON_EXEC"
+    # Check if it's a symlink (it shouldn't be with --copies)
+    if [ -L "$PYTHON_EXEC" ]; then
+        echo -e "${YELLOW}WARN: $PYTHON_EXEC is still a symbolic link despite using --copies?${NC}"
+        ls -l /opt/genopti-os/venv/bin/python* # Show all python links/files
+    fi
+    if sudo -u "$SERVICE_USER" "$PYTHON_EXEC" --version > /dev/null 2>&1; then
+        echo -e "${GREEN}Successfully verified execute permission for $PYTHON_EXEC as user $SERVICE_USER.${NC}"
+    else
+        echo -e "${RED}ERROR: Failed to verify execute permission for $PYTHON_EXEC as user $SERVICE_USER even after using --copies.${NC}"
+        echo -e "${RED}This indicates a deeper system issue or restriction.${NC}"
+    fi
+else
+    echo -e "${RED}ERROR: Python executable not found at $PYTHON_EXEC after venv creation!${NC}"; exit 1
+fi
 
 # --[ Create device ID file with proper permissions ]--------------------------
-echo "Creating /etc/device_id file with proper permissions..."
-# Create the file if it doesn't exist
-touch /etc/device_id
+DEVICE_ID_FILE="/etc/device_id"
+echo "Ensuring $DEVICE_ID_FILE file exists with proper permissions..."
+touch "$DEVICE_ID_FILE"
+if [ ! -s "$DEVICE_ID_FILE" ]; then CPU_SERIAL=$(grep -i "^Serial" /proc/cpuinfo | awk '{print $3}' || true); if [ -n "$CPU_SERIAL" ] && [ "$CPU_SERIAL" != "0000000000000000" ]; then echo "$CPU_SERIAL" > "$DEVICE_ID_FILE"; echo "Initialized $DEVICE_ID_FILE with CPU Serial: $CPU_SERIAL"; else FALLBACK_ID=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16); echo "FALLBACK-$FALLBACK_ID" > "$DEVICE_ID_FILE"; echo -e "${YELLOW}WARN: Could not determine valid CPU serial. Initialized $DEVICE_ID_FILE with fallback ID.${NC}"; fi; fi
+chown "$SERVICE_USER":"$SERVICE_GROUP" "$DEVICE_ID_FILE"; chmod 660 "$DEVICE_ID_FILE"
 
-# Set initial content based on CPU serial if the file is empty
-if [ ! -s /etc/device_id ]; then
-    # Get CPU serial from /proc/cpuinfo
-    CPU_SERIAL=$(grep -i "Serial" /proc/cpuinfo | awk '{print $3}')
-    if [ -n "$CPU_SERIAL" ]; then
-        echo "$CPU_SERIAL" > /etc/device_id
-    else
-        echo "UNKNOWN" > /etc/device_id
-    fi
-fi
-
-# Set permissions so genopti-svc can read and write to it
-chown "$SERVICE_USER":"$SERVICE_GROUP" /etc/device_id
-chmod 660 /etc/device_id
-
-# --[ Stop existing service if running ]---------------------------------------
-if systemctl is-active --quiet "$SERVICE_NAME"; then
-    echo "Stopping existing $SERVICE_NAME service..."
-    systemctl stop "$SERVICE_NAME".service
-fi
-
-# --[ Create or update systemd service file ]---------------------------------
+# --[ Create or update systemd service file ]--------
+# NOTE: No change needed here vs previous Polkit version, the Polkit rule handles permissions externally
 echo "Setting up systemd service at $SERVICE_FILE..."
-
 cat > "$SERVICE_FILE" <<EOL
 [Unit]
 Description=Genopti-OS Flask App Service
-After=network.target
+After=network-online.target polkit.service # Added polkit.service dependency
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_GROUP
 WorkingDirectory=$APP_DIR
-ExecStart=$VENV_DIR/bin/python $APP_SCRIPT
-Restart=always
+ExecStart=$PYTHON_EXEC $APP_SCRIPT
+Restart=on-failure
+RestartSec=5s
 Environment=PYTHONUNBUFFERED=1
 
-# New environment variables
 Environment=DEBUG_MODE=${DEFAULT_DEBUG_MODE}
 Environment=SCAN_RESET_SECONDS=${DEFAULT_SCAN_RESET_SECONDS}
 Environment=SCAN_INACTIVITY_MS=${DEFAULT_SCAN_INACTIVITY_MS}
 
-# Security Hardening (allowing sudo for WiFi configuration)
-CapabilityBoundingSet=CAP_SETUID CAP_SETGID 
-AmbientCapabilities=CAP_SETUID CAP_SETGID
+# Consider re-enabling security options after testing
+# PrivateTmp=true
+# ProtectSystem=strict
+# ProtectHome=true
+# NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
 EOL
 
 # --[ Reload systemd and start the service ]----------------------------------
-echo "Reloading systemd daemon and enabling the $SERVICE_NAME service..."
+echo "Reloading systemd daemon..."
 systemctl daemon-reload
+echo "Re-enabling the $SERVICE_NAME service..."
 systemctl enable "$SERVICE_NAME".service
+echo "Starting $SERVICE_NAME service..."
+sleep 1
 systemctl start "$SERVICE_NAME".service
 
 # --[ Verify service status ]-------------------------------------------------
-echo "Verifying service status..."
-systemctl status "$SERVICE_NAME".service || true
-
-echo "$SERVICE_NAME installed and started successfully under user '$SERVICE_USER'."
-echo "Default ENV Vars: DEBUG_MODE=${DEFAULT_DEBUG_MODE}, SCAN_RESET_SECONDS=${DEFAULT_SCAN_RESET_SECONDS}, SCAN_INACTIVITY_MS=${DEFAULT_SCAN_INACTIVITY_MS}"
-
-# --[ Final Network Connectivity Check ]---------------------------------------
-if ! ping -c 1 8.8.8.8 > /dev/null 2>&1; then
-    echo ""
-    echo "========================================================================"
-    echo "WARNING: No internet connectivity detected after installation."
-    echo ""
-    echo "If any package installation steps failed, you may need to:"
-    echo "1. Create a 'wifi-credentials.txt' file with the following content:"
-    echo "   SSID=your_network_name"
-    echo "   PASSWORD=your_network_password"
-    echo ""
-    echo "2. Run this installation script again."
-    echo "========================================================================"
+echo "Verifying service status (waiting a few seconds)..."
+sleep 4
+if systemctl is-active --quiet "$SERVICE_NAME"; then
+     echo -e "${GREEN}SUCCESS: Service $SERVICE_NAME is active and running.${NC}"
+     echo -e "${GREEN}Polkit rule for NetworkManager access has been configured.${NC}"
+     systemctl status "$SERVICE_NAME".service --no-pager || true
+else
+     echo -e "${RED}ERROR: Service $SERVICE_NAME failed to start.${NC}"
+     systemctl status "$SERVICE_NAME".service --no-pager -l || true
+     echo -e "${RED}Check logs: journalctl -u $SERVICE_NAME -n 50 -l ${NC}"
+     echo -e "${RED}Also check Polkit status: systemctl status polkit.service${NC}"
+     echo -e "${RED}And Polkit logs: journalctl -u polkit.service -n 50${NC}"
 fi
+
+# --[ Final Output & Checks ]-------------------------------------------------
+echo "$SERVICE_NAME installed and expected to run under user '$SERVICE_USER'."
+echo "Default ENV Vars: DEBUG_MODE=${DEFAULT_DEBUG_MODE}, SCAN_RESET_SECONDS=${DEFAULT_SCAN_RESET_SECONDS}, SCAN_INACTIVITY_MS=${DEFAULT_SCAN_INACTIVITY_MS}"
+echo "App Directory: $APP_DIR"
+echo "Log Directory: $APP_DIR/logs"
+echo "Device ID File: $DEVICE_ID_FILE"
+echo "Polkit Rule File: $POLKIT_RULE_PATH (if Polkit detected)"
+echo "Performing final network connectivity check..."
+PING_HOST="8.8.8.8"
+if ping -c 1 -W 3 "$PING_HOST" > /dev/null 2>&1; then echo -e "${GREEN}Network connectivity check successful (ping $PING_HOST).${NC}"; else echo ""; echo -e "${YELLOW}================ WARN: No internet connectivity (ping $PING_HOST failed) ================${NC}"; echo -e "${YELLOW}Use Setup Mode ('$$setup$$') and '$$wifi$$' command to configure network.${NC}"; echo -e "${YELLOW}================================================================================${NC}"; fi
+echo -e "${GREEN}Installation complete.${NC}"
