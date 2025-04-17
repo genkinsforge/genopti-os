@@ -235,7 +235,7 @@ echo "Setting up systemd service at $SERVICE_FILE..."
 cat > "$SERVICE_FILE" <<EOL
 [Unit]
 Description=Genopti-OS Flask App Service
-After=network-online.target polkit.service # Added polkit.service dependency
+After=network-online.target polkit.service
 Wants=network-online.target
 
 [Service]
