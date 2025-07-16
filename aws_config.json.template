@@ -1,0 +1,28 @@
+{
+  "_comment": "GenOpti-OS AWS Integration Configuration",
+  "_instructions": "Copy this file to aws_config.json and fill in your values",
+  
+  "api_base_url": "https://api.genkinsforge.com",
+  "device_model": "genopti_go2",
+  
+  "_registration": "Device registration settings",
+  "setup_token": "YOUR_SETUP_TOKEN_FROM_QR_CODE",
+  "location_id": "LOC_STORE_001",
+  
+  "_features": "Feature toggles",
+  "batch_upload": true,
+  "health_monitoring": true,
+  "underage_alerts": true,
+  
+  "_batch_settings": "Batch processing configuration",
+  "batch_size": 10,
+  "batch_timeout_seconds": 300,
+  
+  "_health_settings": "Health monitoring configuration", 
+  "health_check_interval_seconds": 300,
+  
+  "_advanced": "Advanced settings - don't change unless needed",
+  "retry_attempts": 5,
+  "request_timeout_seconds": 30,
+  "offline_queue_max_age_hours": 1
+}

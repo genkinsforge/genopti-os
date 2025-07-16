@@ -15,6 +15,21 @@ from dotenv import load_dotenv
 import netifaces
 import shutil
 import werkzeug.exceptions
+import shlex
+import secrets
+import hashlib
+import uuid
+from functools import wraps
+
+# AWS Integration
+try:
+    from aws_integration import get_aws_client
+    AWS_INTEGRATION_AVAILABLE = True
+    logging.info("AWS integration module loaded successfully")
+except ImportError as e:
+    AWS_INTEGRATION_AVAILABLE = False
+    logging.warning(f"AWS integration not available: {e}")
+    get_aws_client = lambda: None
 
 # --- Globals and Constants ---
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -200,9 +215,34 @@ def load_initial_environment_vars(app_instance):
 
 # --- WiFi Configuration ---
 # [ WiFi functions remain identical - omitted for brevity ]
+def validate_wifi_input(ssid, password):
+    """Validates WiFi SSID and password for security."""
+    # SSID validation
+    if not ssid or len(ssid) > 32:
+        raise ValueError("SSID must be 1-32 characters")
+    
+    # Allow printable ASCII and common Unicode chars for SSID
+    allowed_ssid_chars = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:,.<>? ')
+    if not all(c in allowed_ssid_chars for c in ssid):
+        raise ValueError("SSID contains invalid characters")
+    
+    # Password validation
+    if password:
+        if len(password) < 8 or len(password) > 63:
+            raise ValueError("WiFi password must be 8-63 characters")
+        # Allow printable ASCII for password
+        if not all(32 <= ord(c) <= 126 for c in password):
+            raise ValueError("Password contains invalid characters")
+    
+    return True
+
 def parse_wifi_config(config_string):
-    """Parses the $$wifi$${...} command string."""
+    """Parses the $$wifi$${...} command string with enhanced security."""
     try:
+        # Limit input size to prevent DoS
+        if len(config_string) > 1024:
+            raise ValueError("WiFi configuration too large")
+        
         # Regex to capture the JSON part after $$wifi$$
         wifi_pattern = re.compile(r'^\s*\$\$\s*wifi\s*\$\$\s*(.*)', re.IGNORECASE | re.DOTALL)
         match = wifi_pattern.search(config_string)
@@ -213,100 +253,130 @@ def parse_wifi_config(config_string):
         if not json_str:
             raise ValueError("Missing JSON payload after $$wifi$$")
 
-        # Parse the JSON
+        # Parse the JSON with size limit
+        if len(json_str) > 512:
+            raise ValueError("JSON payload too large")
+        
         try:
             config = json.loads(json_str)
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON payload: {e}")
 
-        # Validate essential fields
+        # Validate required fields exist
+        if not isinstance(config, dict):
+            raise ValueError("Configuration must be a JSON object")
+        
         if 'ssid' not in config or not config['ssid']:
-            raise ValueError("Missing or empty 'ssid' field in JSON payload")
+            raise ValueError("Missing or empty 'ssid' field")
 
-        # Ensure password is treated as optional (default to empty string for open networks)
-        if 'password' not in config:
-            config['password'] = ''
-
-        # Basic sanitization (remove potential non-printable characters, allow common whitespace)
-        for key in config:
-            if isinstance(config[key], str):
-                config[key] = ''.join(c for c in config[key] if 32 <= ord(c) <= 126 or c in '')
-
-        logging.debug(f"Parsed WiFi config: SSID='{config.get('ssid')}', Password provided: {'yes' if config.get('password') else 'no'}")
-        return config
+        # Get and validate SSID and password
+        ssid = str(config['ssid']).strip()
+        password = str(config.get('password', '')).strip()
+        
+        # Validate inputs using security function
+        validate_wifi_input(ssid, password)
+        
+        # Return sanitized config
+        sanitized_config = {
+            'ssid': ssid,
+            'password': password
+        }
+        
+        logging.info(f"Parsed WiFi config: SSID='{ssid}', Password provided: {'yes' if password else 'no'}")
+        return sanitized_config
 
     except Exception as e:
-        logging.error(f"Error parsing WiFi config string '{config_string[:50]}...': {e}", exc_info=True)
+        logging.error(f"Error parsing WiFi config: {e}")
         raise # Re-raise the specific exception (ValueError or other)
 
 
 def configure_wifi_with_nmcli(ssid, password):
-    """Attempts to connect to WiFi using nmcli."""
+    """Attempts to connect to WiFi using nmcli with enhanced security."""
     nmcli_path = shutil.which("nmcli")
     if not nmcli_path:
         logging.error("`nmcli` command not found in PATH. Cannot configure WiFi.")
         return False, "`nmcli` command not found."
 
-    # Base command
-    nmcli_cmd = [nmcli_path, 'device', 'wifi', 'connect', ssid]
-    # Add password if provided
-    if password:
-        nmcli_cmd.extend(['password', password])
+    # Re-validate inputs for extra security
+    try:
+        validate_wifi_input(ssid, password)
+    except ValueError as e:
+        logging.error(f"WiFi input validation failed: {e}")
+        return False, f"Invalid WiFi credentials: {e}"
 
-    # Security: Avoid logging the full command with password if possible,
-    # but log that we are attempting connection.
-    logging.info(f"Executing nmcli to connect to SSID: '{ssid}' (Password: {'Provided' if password else 'Not Provided'})")
+    # Build command with proper argument separation (prevents injection)
+    nmcli_cmd = [nmcli_path, 'device', 'wifi', 'connect']
+    
+    # Use shlex.quote for additional safety on SSID
+    nmcli_cmd.append(shlex.quote(ssid))
+    
+    # Add password if provided, with proper quoting
+    if password:
+        nmcli_cmd.extend(['password', shlex.quote(password)])
+
+    # Log connection attempt without sensitive data
+    logging.info(f"Attempting WiFi connection to SSID: '{ssid[:20]}{'...' if len(ssid) > 20 else ''}' (Password: {'yes' if password else 'no'})")
 
     try:
-        # Execute the command with timeout
-        result = subprocess.run(nmcli_cmd, capture_output=True, text=True, check=True, timeout=60) # 60s timeout
+        # Execute with restricted environment
+        env = {'PATH': '/usr/bin:/bin:/usr/sbin:/sbin'}
+        result = subprocess.run(
+            nmcli_cmd, 
+            capture_output=True, 
+            text=True, 
+            check=True, 
+            timeout=30,  # Reduced timeout
+            env=env  # Restricted environment
+        )
 
-        # Log output (be careful with sensitive info if any slips through stderr/stdout)
-        logging.info("nmcli stdout: " + result.stdout.strip())
-        logging.info("nmcli stderr: " + result.stderr.strip())
+        # Log sanitized output (remove potential sensitive data)
+        stdout_safe = result.stdout.strip().replace(password, '[REDACTED]') if password else result.stdout.strip()
+        stderr_safe = result.stderr.strip().replace(password, '[REDACTED]') if password else result.stderr.strip()
+        
+        logging.info(f"nmcli completed for SSID '{ssid}'")
+        if stderr_safe:
+            logging.info(f"nmcli stderr: {stderr_safe}")
 
-        # Check common success indicators
+        # Check success indicators
         if "successfully activated" in result.stdout or "Connection successfully activated" in result.stdout:
-            logging.info(f"nmcli reported success connecting to SSID: {ssid}")
+            logging.info(f"Successfully connected to SSID: {ssid}")
             return True, f"Successfully connected to SSID: {ssid}"
         else:
-            # Command succeeded (exit code 0) but might not have connected as expected
-            logging.warning(f"nmcli command succeeded for SSID '{ssid}', but activation message not found. Check status manually.")
-            # Return success=True but provide the output for user context
-            return True, f"nmcli command completed. Status uncertain. Output: {result.stdout.strip()}"
+            logging.warning(f"nmcli completed but connection status unclear for SSID '{ssid}'")
+            return True, f"Connection command completed. Verify network status manually."
 
     except subprocess.CalledProcessError as e:
-        # nmcli command failed (non-zero exit code)
+        # Handle nmcli command failures
         stderr_output = e.stderr.strip() if e.stderr else ""
         stdout_output = e.stdout.strip() if e.stdout else ""
-        logging.error(f"nmcli command failed with exit code {e.returncode} for SSID '{ssid}'")
-        logging.error("nmcli stderr: " + stderr_output)
-        logging.error("nmcli stdout: " + stdout_output)
-
-        # Provide more specific error messages based on output
-        error_message = stderr_output or stdout_output or "nmcli command failed." # Default message
-        if "Secrets were required" in error_message or "Invalid password" in error_message or "802.1X supplicant failed" in error_message:
-             msg = f"Authentication failed for '{ssid}'. Check password or security settings."
+        
+        # Remove password from error messages
+        if password:
+            stderr_output = stderr_output.replace(password, '[REDACTED]')
+            stdout_output = stdout_output.replace(password, '[REDACTED]')
+        
+        logging.error(f"nmcli failed with exit code {e.returncode} for SSID '{ssid}'")
+        
+        # Provide user-friendly error messages
+        error_message = stderr_output or stdout_output or "Connection failed"
+        if "Secrets were required" in error_message or "Invalid password" in error_message:
+            msg = f"Authentication failed for '{ssid}'. Check password."
         elif "Could not find network" in error_message or "No network with SSID" in error_message:
-             msg = f"Network '{ssid}' not found. Check SSID or scan again."
+            msg = f"Network '{ssid}' not found. Check SSID."
         elif "Connection activation failed" in error_message:
-             # Generic activation failure, provide details if possible
-             details = error_message.split(':')[-1].strip() # Get reason after last colon
-             msg = f"Failed to activate connection to '{ssid}'. Reason: {details}"
+            msg = f"Failed to connect to '{ssid}'. Check network settings."
         else:
-             # General failure message (take first line)
-             msg = f"Failed to connect to '{ssid}'. Detail: {error_message.splitlines()[0].strip() if error_message else 'Unknown nmcli error'}"
+            msg = f"Failed to connect to '{ssid}'. Network error."
 
         return False, msg
 
     except subprocess.TimeoutExpired:
-        logging.error(f"nmcli command timed out after 60 seconds for SSID '{ssid}'.")
-        return False, f"Connection attempt to '{ssid}' timed out."
+        logging.error(f"nmcli timed out for SSID '{ssid}'")
+        return False, f"Connection attempt timed out for '{ssid}'"
 
     except Exception as e:
-        # Catch any other unexpected errors during subprocess execution
-        logging.error(f"Unexpected error executing nmcli for SSID '{ssid}': {e}", exc_info=True)
-        return False, f"An unexpected error occurred: {e}"
+        logging.error(f"Unexpected error in WiFi configuration: {e}", exc_info=True)
+        return False, "An unexpected error occurred during WiFi configuration"
 
 
 def handle_wifi_command(wifi_config_string):
@@ -408,6 +478,86 @@ def get_non_loopback_ips():
         logging.warning(f"Error getting IP addresses: {e}", exc_info=True)
         return {"error": f"Could not retrieve IP addresses: {e}"}
 
+# --- Audio and Alert System ---
+def play_beep():
+    """Plays a system beep for underage alerts."""
+    try:
+        # Try different methods to play a beep
+        beep_commands = [
+            ['aplay', '/usr/share/sounds/alsa/Front_Left.wav'],  # ALSA sound
+            ['paplay', '/usr/share/sounds/alsa/Front_Left.wav'], # PulseAudio
+            ['speaker-test', '-t', 'sine', '-f', '1000', '-l', '1'], # Generate tone
+            ['echo', '-e', '\\a']  # Terminal bell fallback
+        ]
+        
+        for cmd in beep_commands:
+            if shutil.which(cmd[0]):
+                try:
+                    subprocess.run(cmd, capture_output=True, timeout=2)
+                    logging.info(f"Beep played using {cmd[0]}")
+                    return True
+                except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
+                    continue
+        
+        # Final fallback - try to write to system bell
+        try:
+            with open('/dev/console', 'w') as console:
+                console.write('\a')
+                console.flush()
+            logging.info("Beep played via console bell")
+            return True
+        except (PermissionError, FileNotFoundError):
+            logging.warning("Could not play beep - no audio method available")
+            return False
+            
+    except Exception as e:
+        logging.error(f"Error playing beep: {e}")
+        return False
+
+# In-memory storage for active alerts (cleared on restart)
+active_alerts = {}
+
+def create_alert(message, alert_type="warning"):
+    """Creates an alert that requires acknowledgment."""
+    alert_id = str(uuid.uuid4())[:8]  # Short ID for QR codes
+    alert_data = {
+        'id': alert_id,
+        'message': message,
+        'type': alert_type,
+        'timestamp': datetime.now().isoformat(),
+        'acknowledged': False
+    }
+    active_alerts[alert_id] = alert_data
+    logging.info(f"Alert created: {alert_id} - {message}")
+    return alert_id
+
+def acknowledge_alert(alert_id):
+    """Acknowledges an alert by ID."""
+    if alert_id in active_alerts:
+        active_alerts[alert_id]['acknowledged'] = True
+        active_alerts[alert_id]['ack_timestamp'] = datetime.now().isoformat()
+        logging.info(f"Alert acknowledged: {alert_id}")
+        return True
+    return False
+
+def get_active_alerts():
+    """Returns all unacknowledged alerts."""
+    return {aid: alert for aid, alert in active_alerts.items() if not alert['acknowledged']}
+
+def clear_acknowledged_alerts():
+    """Removes acknowledged alerts older than 1 hour."""
+    now = datetime.now()
+    to_remove = []
+    for aid, alert in active_alerts.items():
+        if alert['acknowledged'] and 'ack_timestamp' in alert:
+            ack_time = datetime.fromisoformat(alert['ack_timestamp'])
+            if (now - ack_time).total_seconds() > 3600:  # 1 hour
+                to_remove.append(aid)
+    
+    for aid in to_remove:
+        del active_alerts[aid]
+        logging.debug(f"Removed old acknowledged alert: {aid}")
+
 # --- License Parsing & Validation ---
 class LicenseParser:
     """Handles parsing and validation of AAMVA-compliant license data."""
@@ -471,8 +621,65 @@ class LicenseParser:
 
     # --- THIS METHOD CONTAINS THE REVISED PARSING LOGIC (v0.48) ---
     @staticmethod
+    def sanitize_field_value(field_code: str, value: str) -> str:
+        """Sanitizes individual field values for security and data integrity."""
+        if not isinstance(value, str):
+            value = str(value)
+        
+        # Length limits for different field types
+        length_limits = {
+            'name': 50,      # Names
+            'address': 100,  # Address fields
+            'id': 50,        # ID numbers
+            'code': 10,      # Codes and classifications
+            'default': 200   # Default limit
+        }
+        
+        # Categorize fields for appropriate limits
+        name_fields = {'last_name', 'first_name', 'middle_name', 'full_name', 'other_last_name', 'other_first_name'}
+        address_fields = {'address_street', 'address_street_2', 'address_city', 'address_state', 'place_of_birth'}
+        id_fields = {'customer_id_number', 'document_discriminator', 'customer_identifier'}
+        code_fields = {'jurisdiction_vehicle_class', 'license_class_code', 'eye_color', 'hair_color'}
+        
+        field_name = LicenseParser.AAMVA_FIELD_MAP.get(field_code, '')
+        
+        if field_name in name_fields:
+            max_len = length_limits['name']
+        elif field_name in address_fields:
+            max_len = length_limits['address']
+        elif field_name in id_fields:
+            max_len = length_limits['id']
+        elif field_name in code_fields:
+            max_len = length_limits['code']
+        else:
+            max_len = length_limits['default']
+        
+        # Truncate if too long
+        if len(value) > max_len:
+            logging.warning(f"Field {field_code} ({field_name}) value truncated from {len(value)} to {max_len} characters")
+            value = value[:max_len]
+        
+        # Remove potentially dangerous characters but preserve normal text
+        # Allow printable ASCII plus common accented characters
+        safe_chars = set()
+        for c in value:
+            # Printable ASCII (space through tilde)
+            if 32 <= ord(c) <= 126:
+                safe_chars.add(c)
+            # Common accented characters for names
+            elif 128 <= ord(c) <= 255 and field_name in name_fields:
+                safe_chars.add(c)
+        
+        sanitized = ''.join(c for c in value if c in safe_chars)
+        
+        # Remove control characters and normalize whitespace
+        sanitized = re.sub(r'\s+', ' ', sanitized.strip())
+        
+        return sanitized
+
+    @staticmethod
     def parse_aamva(data: str) -> dict:
-        """Parses an AAMVA PDF417 barcode string based on finding consecutive KNOWN field codes, with trailer truncation."""
+        """Parses an AAMVA PDF417 barcode string with enhanced security validation."""
         parsed_data = {}
         data_start_index = -1
 
@@ -480,6 +687,15 @@ class LicenseParser:
         if not isinstance(data, str):
             logging.error(f"Invalid input type for parse_aamva: expected string, got {type(data)}")
             raise ValueError("Invalid input data type.")
+        
+        # Input size validation to prevent DoS
+        if len(data) > 10000:  # Reasonable limit for barcode data
+            logging.error(f"Input data too large: {len(data)} characters")
+            raise ValueError("Barcode data exceeds maximum size limit.")
+        
+        if len(data) < 10:  # Too small to be valid AAMVA data
+            logging.error(f"Input data too small: {len(data)} characters")
+            raise ValueError("Barcode data too small to be valid AAMVA format.")
 
         # --- Find Start Marker / Header (Same logic as v0.47) ---
         ansi_marker = "ANSI "
@@ -593,13 +809,14 @@ class LicenseParser:
             # --- End Trailer Truncation ---
 
 
-            # Clean the potentially truncated value
+            # Clean and sanitize the potentially truncated value
             cleaned_value = final_value.strip()
-            logging.debug(f"Field: {field_code}, Final Cleaned Value: '{cleaned_value}'")
+            sanitized_value = LicenseParser.sanitize_field_value(field_code, cleaned_value)
+            logging.debug(f"Field: {field_code}, Final Sanitized Value: '{sanitized_value}'")
 
             # Map field code to meaningful name
             field_name = LicenseParser.AAMVA_FIELD_MAP[field_code]
-            parsed_value = LicenseParser._parse_date(field_code, cleaned_value) if field_code in LicenseParser.DATE_FIELDS else cleaned_value
+            parsed_value = LicenseParser._parse_date(field_code, sanitized_value) if field_code in LicenseParser.DATE_FIELDS else sanitized_value
 
             if field_name in parsed_data:
                 logging.warning(f"Duplicate field code {field_code} ('{field_name}') encountered. Overwriting previous value '{parsed_data[field_name]}' with '{parsed_value}'.")
@@ -980,6 +1197,32 @@ def process_scan():
                 validation_msg = LicenseParser.get_validation_message(validation)
                 logging.debug(f"Validation Message: {validation_msg}")
 
+                # Handle underage alerts and beeps
+                alert_id = None
+                if not validation.get('meets_age_requirement', False) and validation.get('age') is not None:
+                    # Underage person detected
+                    age = validation.get('age')
+                    name = name_to_send or 'Unknown'
+                    alert_message = f"Underage person detected: {name}, Age: {age}"
+                    alert_id = create_alert(alert_message, "underage")
+                    
+                    # Play beep for underage detection
+                    beep_success = play_beep()
+                    logging.warning(f"Underage scan detected: {name}, Age: {age}, Beep: {'Success' if beep_success else 'Failed'}")
+                
+                # Clean up old acknowledged alerts
+                clear_acknowledged_alerts()
+
+                # AWS Integration - Log scan result
+                if AWS_INTEGRATION_AVAILABLE:
+                    try:
+                        aws_client = get_aws_client()
+                        if aws_client and aws_client.is_registered():
+                            aws_client.log_scan_result(parsed_data, validation)
+                            logging.debug("Scan result logged to AWS backend")
+                    except Exception as e:
+                        logging.error(f"AWS integration error: {e}")
+
                 response_data = {
                     'success': True,
                     'setup_mode': False,
@@ -992,10 +1235,26 @@ def process_scan():
                     'is_valid': validation.get('is_valid', False),
                     'is_expired': validation.get('is_expired'),
                     'validation_message': validation_msg,
-                    'raw_data': scan_str if DEBUG_MODE else None
+                    'alert_id': alert_id,  # Include alert ID if underage
+                    'active_alerts': get_active_alerts(),  # Include all active alerts
+                    'raw_data': None  # Never send raw scan data to client for security
                 }
                 logging.info(f"Normal Scan Result: {response_data.get('validation_message')}")
-                logging.debug(f"Sending JSON response: {json.dumps(response_data)}")
+                
+                # Log redacted response data for security
+                redacted_response = {
+                    'success': response_data['success'],
+                    'setup_mode': response_data['setup_mode'],
+                    'is_valid': response_data['is_valid'],
+                    'is_expired': response_data['is_expired'],
+                    'validation_message': response_data['validation_message'],
+                    'age': response_data.get('age'),
+                    'name': '[REDACTED]' if response_data.get('name') else None,
+                    'address': '[REDACTED]' if response_data.get('address') else None,
+                    'dob': '[REDACTED]' if response_data.get('dob') else None,
+                    'raw_data': '[REDACTED]' if response_data.get('raw_data') else None
+                }
+                logging.debug(f"Sending scan response (personal data redacted): {json.dumps(redacted_response)}")
                 return jsonify(response_data)
 
             except ValueError as ve:
@@ -1015,6 +1274,156 @@ def process_scan():
             'setup_mode': current_setup_status
         }
         return jsonify(response_data), 500
+
+
+# --- Alert Management Routes ---
+@app.route('/api/alerts', methods=['GET'])
+def get_alerts_api():
+    """Returns all active alerts."""
+    try:
+        clear_acknowledged_alerts()  # Clean up old alerts
+        alerts = get_active_alerts()
+        return jsonify({
+            'success': True,
+            'alerts': alerts,
+            'count': len(alerts)
+        })
+    except Exception as e:
+        logging.error(f"Error getting alerts: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Failed to retrieve alerts'}), 500
+
+@app.route('/api/alerts/acknowledge', methods=['POST'])
+def acknowledge_alert_api():
+    """Acknowledges an alert by ID or QR code command."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+        
+        # Handle QR code format: $$ack$$alert_id
+        if 'scan_str' in data:
+            scan_str = data['scan_str'].strip()
+            # Check if it's an acknowledgment QR code
+            ack_pattern = re.match(r'^\s*\$\$\s*ack\s*\$\$\s*(\w+)', scan_str, re.IGNORECASE)
+            if ack_pattern:
+                alert_id = ack_pattern.group(1).strip()
+            else:
+                return jsonify({'success': False, 'error': 'Invalid acknowledgment QR code format'}), 400
+        elif 'alert_id' in data:
+            alert_id = data['alert_id'].strip()
+        else:
+            return jsonify({'success': False, 'error': 'Missing alert_id or scan_str'}), 400
+        
+        # Validate alert ID format (alphanumeric, max 8 chars)
+        if not re.match(r'^[a-zA-Z0-9]{1,8}$', alert_id):
+            return jsonify({'success': False, 'error': 'Invalid alert ID format'}), 400
+        
+        success = acknowledge_alert(alert_id)
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'Alert {alert_id} acknowledged',
+                'active_alerts': get_active_alerts()
+            })
+        else:
+            return jsonify({'success': False, 'error': f'Alert {alert_id} not found or already acknowledged'}), 404
+            
+    except Exception as e:
+        logging.error(f"Error acknowledging alert: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Failed to acknowledge alert'}), 500
+
+@app.route('/api/alerts/clear', methods=['POST'])
+def clear_alerts_api():
+    """Clears all acknowledged alerts."""
+    try:
+        clear_acknowledged_alerts()
+        return jsonify({
+            'success': True,
+            'message': 'Acknowledged alerts cleared',
+            'active_alerts': get_active_alerts()
+        })
+    except Exception as e:
+        logging.error(f"Error clearing alerts: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Failed to clear alerts'}), 500
+
+
+# --- AWS Integration Routes ---
+@app.route('/api/aws/status', methods=['GET'])
+def aws_status():
+    """Get AWS integration status."""
+    try:
+        if not AWS_INTEGRATION_AVAILABLE:
+            return jsonify({
+                'aws_integration': False,
+                'error': 'AWS integration module not available'
+            })
+        
+        aws_client = get_aws_client()
+        if aws_client:
+            status = aws_client.get_status()
+            return jsonify({
+                'aws_integration': True,
+                'status': status
+            })
+        else:
+            return jsonify({
+                'aws_integration': False,
+                'error': 'AWS client not initialized'
+            })
+    except Exception as e:
+        logging.error(f"Error getting AWS status: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Failed to get AWS status'}), 500
+
+@app.route('/api/aws/register', methods=['POST'])
+def aws_register():
+    """Register device with AWS backend."""
+    try:
+        if not AWS_INTEGRATION_AVAILABLE:
+            return jsonify({'success': False, 'error': 'AWS integration not available'}), 400
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+        
+        setup_token = data.get('setup_token')
+        location_id = data.get('location_id')
+        
+        if not setup_token or not location_id:
+            return jsonify({'success': False, 'error': 'setup_token and location_id required'}), 400
+        
+        aws_client = get_aws_client()
+        success = aws_client.register_device(setup_token, location_id)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Device registered successfully',
+                'status': aws_client.get_status()
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Registration failed'}), 500
+            
+    except Exception as e:
+        logging.error(f"Error registering device: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Failed to register device'}), 500
+
+@app.route('/api/aws/force-batch', methods=['POST'])
+def force_batch_send():
+    """Force send current batch to AWS."""
+    try:
+        if not AWS_INTEGRATION_AVAILABLE:
+            return jsonify({'success': False, 'error': 'AWS integration not available'}), 400
+        
+        aws_client = get_aws_client()
+        if aws_client and aws_client.is_registered():
+            aws_client.force_batch_send()
+            return jsonify({'success': True, 'message': 'Batch sent successfully'})
+        else:
+            return jsonify({'success': False, 'error': 'Device not registered'}), 400
+            
+    except Exception as e:
+        logging.error(f"Error forcing batch send: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Failed to send batch'}), 500
 
 
 # --- Error Handler ---

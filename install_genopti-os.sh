@@ -91,18 +91,25 @@ else
   cat > "$POLKIT_RULE_PATH" << EOF
 /*
  * Allow the '$SERVICE_USER' user (running the Genopti-OS application)
- * to manage system-level network connections via NetworkManager without password.
- * This is needed for the application to connect to new WiFi networks
- * using nmcli when triggered (e.g., by a QR code in setup mode).
+ * to perform specific WiFi operations via NetworkManager without password.
+ * This provides minimal necessary permissions for QR code WiFi setup.
  */
 polkit.addRule(function(action, subject) {
-    if ((action.id == "org.freedesktop.NetworkManager.settings.modify.system" ||
-         action.id == "org.freedesktop.NetworkManager.network-control") &&
-        subject.user === "$SERVICE_USER") {
-            // Grant permission without asking for password
-            // polkit.log("Granting NetworkManager permissions to $SERVICE_USER for action: " + action.id); // Uncomment for debugging polkit logs
+    if (subject.user === "$SERVICE_USER") {
+        // Allow specific WiFi-related actions only
+        if (action.id == "org.freedesktop.NetworkManager.wifi.share.open" ||
+            action.id == "org.freedesktop.NetworkManager.wifi.share.protected" ||
+            action.id == "org.freedesktop.NetworkManager.network-control") {
+            // Grant permission for WiFi connection operations
             return polkit.Result.YES;
+        }
+        // Deny broader system settings modification
+        if (action.id == "org.freedesktop.NetworkManager.settings.modify.system") {
+            return polkit.Result.NO;
+        }
     }
+    // Default: ask for authentication
+    return polkit.Result.NOT_HANDLED;
 });
 EOF
 
