@@ -4,6 +4,7 @@
 # --- Imports ---
 from flask import Flask, render_template, request, jsonify, current_app
 from datetime import datetime, date
+import time
 import re
 import logging
 from logging.handlers import RotatingFileHandler
@@ -292,10 +293,10 @@ def parse_wifi_config(config_string):
 
 def configure_wifi_with_nmcli(ssid, password):
     """Attempts to connect to WiFi using nmcli with enhanced security."""
-    nmcli_path = shutil.which("nmcli")
+    nmcli_path = shutil.which("sudo")
     if not nmcli_path:
-        logging.error("`nmcli` command not found in PATH. Cannot configure WiFi.")
-        return False, "`nmcli` command not found."
+        logging.error("`sudo` command not found in PATH. Cannot configure WiFi.")
+        return False, "`sudo` command not found."
 
     # Re-validate inputs for extra security
     try:
@@ -304,8 +305,19 @@ def configure_wifi_with_nmcli(ssid, password):
         logging.error(f"WiFi input validation failed: {e}")
         return False, f"Invalid WiFi credentials: {e}"
 
+    # First perform a WiFi rescan to ensure fresh network list
+    rescan_cmd = [nmcli_path, 'nmcli', 'device', 'wifi', 'rescan']
+    try:
+        logging.debug(f"Running WiFi rescan command: {rescan_cmd}")
+        subprocess.run(rescan_cmd, check=True, capture_output=True, text=True, timeout=30)
+        time.sleep(3)  # Wait for rescan to complete
+    except subprocess.TimeoutExpired:
+        logging.warning("WiFi rescan timed out, continuing with connection attempt")
+    except Exception as e:
+        logging.warning(f"WiFi rescan failed: {e}, continuing with connection attempt")
+
     # Build command with proper argument separation (prevents injection)
-    nmcli_cmd = [nmcli_path, 'device', 'wifi', 'connect']
+    nmcli_cmd = [nmcli_path, 'nmcli', 'device', 'wifi', 'connect']
     
     # Use shlex.quote for additional safety on SSID
     nmcli_cmd.append(shlex.quote(ssid))

@@ -73,9 +73,12 @@ if ! id "$SERVICE_USER" &>/dev/null; then echo "Creating system user: $SERVICE_U
 echo "Adding $SERVICE_USER to 'netdev' group for NetworkManager permissions (may not be sufficient for modification)..."
 usermod -a -G netdev "$SERVICE_USER" || echo -e "${YELLOW}WARN: Failed to add $SERVICE_USER to netdev group.${NC}"
 
-# --[ Remove dangerous sudoers configuration ]--------------------------------
-SUDOERS_FILE="/etc/sudoers.d/$SERVICE_USER"
-if [ -f "$SUDOERS_FILE" ]; then echo "Removing potentially insecure sudoers file: $SUDOERS_FILE"; rm -f "$SUDOERS_FILE"; fi
+# --[ Configure sudo permissions for nmcli (Required for WiFi setup) ]-------
+SUDOERS_FILE="/etc/sudoers.d/genopti-networkmanager"
+echo "Setting up sudo permissions for NetworkManager access..."
+echo "$SERVICE_USER ALL=(root) NOPASSWD: /usr/bin/nmcli" > "$SUDOERS_FILE"
+chmod 440 "$SUDOERS_FILE"
+echo "Sudo permissions configured for nmcli access."
 
 # --[ Polkit Setup for NetworkManager Permissions ]---------------------------
 echo -e "${BLUE}Setting up Polkit rule for NetworkManager access...${NC}"
