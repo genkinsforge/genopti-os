@@ -628,7 +628,7 @@ def execute_device_registration(device_id, setup_token, bootstrapping_key_id, lo
         # Phase 2: Generate challenge and signature
         logging.info("Phase 2: Generating challenge and signature")
         challenge = generate_registration_challenge(device_id, salt)
-        signature = generate_registration_signature(challenge, device_id)
+        signature = generate_registration_signature(challenge, device_id, salt)
         
         # Phase 2: Registration Request
         logging.info("Phase 2: Sending registration request")
@@ -684,35 +684,24 @@ def execute_device_registration(device_id, setup_token, bootstrapping_key_id, lo
 
 
 def generate_registration_challenge(device_id, salt):
-    """Generate SHA256 challenge for device registration."""
-    import hashlib
-    import secrets
+    """Generate deterministic challenge for device registration."""
     import time
     
-    # Generate secure random data
-    random_data = secrets.token_hex(32)
-    
-    # Create challenge string: deviceId + salt + randomData
-    challenge_string = f"{device_id}{salt}{random_data}"
-    
-    # Generate SHA256 hash
-    challenge_hash = hashlib.sha256(challenge_string.encode('utf-8')).hexdigest()
-    
-    # Format challenge as expected by API: REGISTER_{timestamp}_{hash}
+    # Format challenge as expected by API: REGISTER_{timestamp}_{deviceId}_{salt}
+    # No randomization - must be deterministic so API can verify
     timestamp = int(time.time())
-    formatted_challenge = f"REGISTER_{timestamp}_{challenge_hash}"
+    formatted_challenge = f"REGISTER_{timestamp}_{device_id}_{salt}"
     
     logging.debug(f"Generated challenge: {formatted_challenge[:32]}...")
     return formatted_challenge
 
 
-def generate_registration_signature(challenge, device_id):
+def generate_registration_signature(challenge, device_id, salt):
     """Generate cryptographic signature for registration."""
     import hashlib
     
-    # For now, use a simple HMAC-style signature
-    # In production, this should use proper cryptographic signing
-    signature_string = f"{challenge}{device_id}"
+    # Generate signature as expected by API: SHA256(challenge + deviceId + salt)
+    signature_string = f"{challenge}{device_id}{salt}"
     signature = hashlib.sha256(signature_string.encode('utf-8')).hexdigest()
     
     logging.debug(f"Generated signature: {signature[:16]}...")
