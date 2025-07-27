@@ -711,7 +711,7 @@ def generate_registration_signature(challenge, device_id, salt):
 def store_device_registration(registration_data):
     """Store device registration data locally."""
     try:
-        registration_file = "/etc/genopti-device-registration"
+        registration_file = "/opt/genopti-os/device-registration.json"
         
         # Store essential registration info
         registration_info = {
@@ -731,7 +731,7 @@ def store_device_registration(registration_data):
         
         # Store JWT token separately with more restrictive permissions
         if registration_data.get('jwt'):
-            jwt_file = "/etc/genopti-device-token"
+            jwt_file = "/opt/genopti-os/device-token.json"
             jwt_info = {
                 'jwt': registration_data.get('jwt'),
                 'expires_at': registration_data.get('expires_at'),
