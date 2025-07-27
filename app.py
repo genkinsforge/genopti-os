@@ -414,6 +414,353 @@ def handle_wifi_command(wifi_config_string):
         return {'success': False, 'message': f'Internal error processing WiFi command: {e}', 'ips': get_non_loopback_ips()}
 
 
+def handle_ping_command(ping_config_string):
+    """Parses the ping command and executes network connectivity test."""
+    try:
+        # Extract JSON from the ping command string
+        ping_match = re.search(r'\$\$\s*ping\s*\$\$\s*(\{.*\})', ping_config_string, re.IGNORECASE | re.DOTALL)
+        if not ping_match:
+            raise ValueError("Invalid ping command format")
+        
+        ping_config = json.loads(ping_match.group(1))
+        
+        # Extract parameters with defaults
+        target = ping_config.get('target', '8.8.8.8')
+        count = int(ping_config.get('count', 3))
+        timeout_ms = int(ping_config.get('timeout', 5000))
+        timeout_seconds = timeout_ms / 1000.0
+        
+        # Validate parameters
+        if not target:
+            raise ValueError("Target cannot be empty")
+        if count < 1 or count > 10:
+            raise ValueError("Count must be between 1 and 10")
+        if timeout_seconds < 1 or timeout_seconds > 30:
+            raise ValueError("Timeout must be between 1000ms and 30000ms")
+        
+        logging.info(f"Executing ping test: target={target}, count={count}, timeout={timeout_seconds}s")
+        
+        # Execute ping command
+        ping_cmd = ['ping', '-c', str(count), '-W', str(int(timeout_seconds)), target]
+        logging.debug(f"Running ping command: {ping_cmd}")
+        
+        result = subprocess.run(ping_cmd, capture_output=True, text=True, timeout=timeout_seconds + 5)
+        
+        # Parse ping results
+        success = result.returncode == 0
+        stdout_lines = result.stdout.strip().split('\n') if result.stdout else []
+        stderr_lines = result.stderr.strip().split('\n') if result.stderr else []
+        
+        if success:
+            # Extract statistics from ping output
+            stats_info = "Ping successful"
+            for line in stdout_lines:
+                if 'packet loss' in line:
+                    stats_info = line.strip()
+                    break
+            message = f"Connectivity test passed. {stats_info}"
+            logging.info(f"Ping successful: {message}")
+        else:
+            error_msg = stderr_lines[0] if stderr_lines else "Ping failed"
+            message = f"Connectivity test failed: {error_msg}"
+            logging.warning(f"Ping failed: {message}")
+        
+        return {
+            'success': success,
+            'message': message,
+            'target': target,
+            'count': count,
+            'timeout_ms': timeout_ms,
+            'ping_output': stdout_lines[-2:] if stdout_lines else [],  # Last 2 lines typically contain summary
+            'ips': get_non_loopback_ips()
+        }
+        
+    except json.JSONDecodeError as e:
+        logging.error(f"Invalid JSON in ping command: {e}")
+        return {'success': False, 'message': f'Invalid JSON in ping command: {e}', 'ips': get_non_loopback_ips()}
+    except ValueError as e:
+        logging.error(f"Invalid ping command parameters: {e}")  
+        return {'success': False, 'message': f'Invalid ping parameters: {e}', 'ips': get_non_loopback_ips()}
+    except subprocess.TimeoutExpired:
+        logging.error(f"Ping command timed out after {timeout_seconds + 5} seconds")
+        return {'success': False, 'message': 'Ping command timed out', 'ips': get_non_loopback_ips()}
+    except Exception as e:
+        logging.error(f"Error handling ping command: {e}", exc_info=True)
+        return {'success': False, 'message': f'Internal error processing ping command: {e}', 'ips': get_non_loopback_ips()}
+
+
+def handle_register_command(register_config_string):
+    """Parses the register command and executes device registration."""
+    try:
+        # Extract JSON from the register command string
+        register_match = re.search(r'\$\$\s*register\s*\$\$\s*(\{.*\})', register_config_string, re.IGNORECASE | re.DOTALL)
+        if not register_match:
+            raise ValueError("Invalid register command format")
+        
+        register_config = json.loads(register_match.group(1))
+        
+        # Extract and validate required parameters
+        setup_token = register_config.get('setupToken', '').strip()
+        bootstrapping_key_id = register_config.get('bootstrappingKeyId', '').strip()
+        location_id = register_config.get('locationId', '').strip()
+        api_endpoint = register_config.get('apiEndpoint', 'https://api.genkinsforge.com').strip()
+        
+        # Validate required fields
+        if not setup_token:
+            raise ValueError("setupToken is required")
+        if not setup_token.startswith('ST_'):
+            raise ValueError("setupToken must start with 'ST_'")
+        if not bootstrapping_key_id:
+            raise ValueError("bootstrappingKeyId is required")
+        if not location_id:
+            raise ValueError("locationId is required")
+        if not location_id.startswith('LOC_'):
+            raise ValueError("locationId must start with 'LOC_'")
+        if not api_endpoint.startswith('https://'):
+            raise ValueError("apiEndpoint must be a valid HTTPS URL")
+        
+        logging.info(f"Starting device registration: bootstrappingKeyId={bootstrapping_key_id}, locationId={location_id}")
+        
+        # Generate device ID using CPU serial + version suffix
+        cpu_serial = get_cpu_serial()
+        device_id = f"{cpu_serial}_go20"
+        
+        # Execute two-phase registration
+        registration_result = execute_device_registration(
+            device_id=device_id,
+            setup_token=setup_token,
+            bootstrapping_key_id=bootstrapping_key_id,
+            location_id=location_id,
+            api_endpoint=api_endpoint
+        )
+        
+        if registration_result['success']:
+            # Store registration data locally
+            store_device_registration(registration_result['data'])
+            message = f"Device {device_id} successfully registered to {location_id}"
+            logging.info(f"Registration successful: {message}")
+        else:
+            message = f"Registration failed: {registration_result.get('error', 'Unknown error')}"
+            logging.error(f"Registration failed: {message}")
+        
+        return {
+            'success': registration_result['success'],
+            'message': message,
+            'device_id': device_id,
+            'location_id': location_id,
+            'bootstrapping_key_id': bootstrapping_key_id,
+            'api_endpoint': api_endpoint,
+            'ips': get_non_loopback_ips()
+        }
+        
+    except json.JSONDecodeError as e:
+        logging.error(f"Invalid JSON in register command: {e}")
+        return {'success': False, 'message': f'Invalid JSON in register command: {e}', 'ips': get_non_loopback_ips()}
+    except ValueError as e:
+        logging.error(f"Invalid register command parameters: {e}")  
+        return {'success': False, 'message': f'Invalid register parameters: {e}', 'ips': get_non_loopback_ips()}
+    except Exception as e:
+        logging.error(f"Error handling register command: {e}", exc_info=True)
+        return {'success': False, 'message': f'Internal error processing register command: {e}', 'ips': get_non_loopback_ips()}
+
+
+def get_cpu_serial():
+    """Extract CPU serial number from /proc/cpuinfo."""
+    try:
+        with open('/proc/cpuinfo', 'r') as f:
+            for line in f:
+                if line.startswith('Serial'):
+                    # Extract serial after the colon, strip whitespace
+                    serial = line.split(':', 1)[1].strip()
+                    if serial and serial != '0000000000000000':
+                        return serial
+        # Fallback if no valid serial found
+        logging.warning("No valid CPU serial found, using fallback")
+        return "UNKNOWN_SERIAL"
+    except Exception as e:
+        logging.error(f"Error reading CPU serial: {e}")
+        return "ERROR_SERIAL"
+
+
+def execute_device_registration(device_id, setup_token, bootstrapping_key_id, location_id, api_endpoint):
+    """Execute the two-phase device registration protocol."""
+    try:
+        import requests
+        
+        # Phase 1: Setup Request
+        logging.info("Phase 1: Sending setup request")
+        setup_url = f"{api_endpoint}/webhook/registration"
+        setup_payload = {
+            "action": "setup",
+            "deviceId": device_id,
+            "setupToken": setup_token,
+            "bootstrappingKeyId": bootstrapping_key_id
+        }
+        
+        setup_response = requests.post(
+            setup_url,
+            json=setup_payload,
+            headers={"Content-Type": "application/json"},
+            timeout=30
+        )
+        
+        if setup_response.status_code != 200:
+            error_msg = f"Setup request failed with status {setup_response.status_code}"
+            try:
+                error_detail = setup_response.json().get('message', 'No details provided')
+                error_msg += f": {error_detail}"
+            except:
+                error_msg += f": {setup_response.text}"
+            return {'success': False, 'error': error_msg}
+        
+        setup_data = setup_response.json()
+        if not setup_data.get('success'):
+            return {'success': False, 'error': setup_data.get('message', 'Setup phase failed')}
+        
+        # Extract setup response data
+        setup_info = setup_data.get('data', {})
+        salt = setup_info.get('salt')
+        account_uid = setup_info.get('accountUid')
+        
+        if not salt or not account_uid:
+            return {'success': False, 'error': 'Setup response missing required data (salt/accountUid)'}
+        
+        # Phase 2: Generate challenge and signature
+        logging.info("Phase 2: Generating challenge and signature")
+        challenge = generate_registration_challenge(device_id, salt)
+        signature = generate_registration_signature(challenge, device_id)
+        
+        # Phase 2: Registration Request
+        logging.info("Phase 2: Sending registration request")
+        register_payload = {
+            "action": "registration",
+            "deviceId": device_id,
+            "challenge": challenge,
+            "signature": signature,
+            "locationId": location_id,
+            "bootstrappingKeyId": bootstrapping_key_id
+        }
+        
+        register_response = requests.post(
+            setup_url,
+            json=register_payload,
+            headers={"Content-Type": "application/json"},
+            timeout=30
+        )
+        
+        if register_response.status_code != 200:
+            error_msg = f"Registration request failed with status {register_response.status_code}"
+            try:
+                error_detail = register_response.json().get('message', 'No details provided')  
+                error_msg += f": {error_detail}"
+            except:
+                error_msg += f": {register_response.text}"
+            return {'success': False, 'error': error_msg}
+        
+        register_data = register_response.json()
+        if not register_data.get('success'):
+            return {'success': False, 'error': register_data.get('message', 'Registration phase failed')}
+        
+        # Return success with registration data
+        return {
+            'success': True,
+            'data': {
+                'device_id': device_id,
+                'account_uid': account_uid,
+                'location_id': location_id,
+                'jwt': register_data.get('data', {}).get('jwt'),
+                'expires_at': register_data.get('data', {}).get('expiresAt'),
+                'api_endpoint': api_endpoint
+            }
+        }
+        
+    except requests.exceptions.Timeout:
+        return {'success': False, 'error': 'Registration request timed out'}
+    except requests.exceptions.ConnectionError:
+        return {'success': False, 'error': 'Unable to connect to registration API'}
+    except Exception as e:
+        logging.error(f"Error during device registration: {e}", exc_info=True)
+        return {'success': False, 'error': f'Registration error: {str(e)}'}
+
+
+def generate_registration_challenge(device_id, salt):
+    """Generate SHA256 challenge for device registration."""
+    import hashlib
+    import secrets
+    import time
+    
+    # Generate secure random data
+    random_data = secrets.token_hex(32)
+    
+    # Create challenge string: deviceId + salt + randomData
+    challenge_string = f"{device_id}{salt}{random_data}"
+    
+    # Generate SHA256 hash
+    challenge_hash = hashlib.sha256(challenge_string.encode('utf-8')).hexdigest()
+    
+    # Format challenge as expected by API: REGISTER_{timestamp}_{hash}
+    timestamp = int(time.time())
+    formatted_challenge = f"REGISTER_{timestamp}_{challenge_hash}"
+    
+    logging.debug(f"Generated challenge: {formatted_challenge[:32]}...")
+    return formatted_challenge
+
+
+def generate_registration_signature(challenge, device_id):
+    """Generate cryptographic signature for registration."""
+    import hashlib
+    
+    # For now, use a simple HMAC-style signature
+    # In production, this should use proper cryptographic signing
+    signature_string = f"{challenge}{device_id}"
+    signature = hashlib.sha256(signature_string.encode('utf-8')).hexdigest()
+    
+    logging.debug(f"Generated signature: {signature[:16]}...")
+    return signature
+
+
+def store_device_registration(registration_data):
+    """Store device registration data locally."""
+    try:
+        registration_file = "/etc/genopti-device-registration"
+        
+        # Store essential registration info
+        registration_info = {
+            'device_id': registration_data.get('device_id'),
+            'account_uid': registration_data.get('account_uid'),
+            'location_id': registration_data.get('location_id'),
+            'api_endpoint': registration_data.get('api_endpoint'),
+            'registered_at': time.time()
+        }
+        
+        with open(registration_file, 'w') as f:
+            json.dump(registration_info, f, indent=2)
+        
+        # Set secure permissions
+        import os
+        os.chmod(registration_file, 0o640)
+        
+        # Store JWT token separately with more restrictive permissions
+        if registration_data.get('jwt'):
+            jwt_file = "/etc/genopti-device-token"
+            jwt_info = {
+                'jwt': registration_data.get('jwt'),
+                'expires_at': registration_data.get('expires_at'),
+                'created_at': time.time()
+            }
+            
+            with open(jwt_file, 'w') as f:
+                json.dump(jwt_info, f, indent=2)
+            
+            os.chmod(jwt_file, 0o600)
+        
+        logging.info(f"Device registration data stored successfully")
+        
+    except Exception as e:
+        logging.error(f"Error storing device registration data: {e}", exc_info=True)
+        raise
+
+
 # --- Application Restart ---
 # [ Restart function remains identical - omitted for brevity ]
 def restart_application():
@@ -1105,6 +1452,8 @@ def process_scan():
         setup_exit_pattern = re.compile(r'^\s*\$\$\s*exit\s*\$\$\s*$', re.IGNORECASE)
         setup_serial_pattern = re.compile(r'^\s*\$\$\s*serialnumber\s*\$\$\s*(\{.*\})\s*$', re.IGNORECASE | re.DOTALL)
         setup_wifi_pattern = re.compile(r'^\s*\$\$\s*wifi\s*\$\$\s*(\{.*\})\s*$', re.IGNORECASE | re.DOTALL)
+        setup_ping_pattern = re.compile(r'^\s*\$\$\s*ping\s*\$\$\s*(\{.*\})\s*$', re.IGNORECASE | re.DOTALL)  
+        setup_register_pattern = re.compile(r'^\s*\$\$\s*register\s*\$\$\s*(\{.*\})\s*$', re.IGNORECASE | re.DOTALL)
         setup_restart_pattern = re.compile(r'^\s*\$\$\s*restartapp\s*\$\$\s*$', re.IGNORECASE)
         generic_setup_pattern = re.compile(r'^\s*\$\$.*\$\$')
 
@@ -1149,6 +1498,36 @@ def process_scan():
                 return build_setup_mode_response(
                     message=wifi_result.get('message', 'WiFi command processed.'),
                     success=wifi_result.get('success', False)
+                )
+            # Ping Connectivity Test
+            ping_match = setup_ping_pattern.match(scan_str)
+            if ping_match:
+                logging.info("Setup command received: PING connectivity test.")
+                ping_result = handle_ping_command(scan_str)
+                return build_setup_mode_response(
+                    message=ping_result.get('message', 'Ping command processed.'),
+                    success=ping_result.get('success', False),
+                    extra_data={
+                        'ping_target': ping_result.get('target'),
+                        'ping_count': ping_result.get('count'),
+                        'ping_timeout_ms': ping_result.get('timeout_ms'),
+                        'ping_output': ping_result.get('ping_output', [])
+                    }
+                )
+            # Device Registration
+            register_match = setup_register_pattern.match(scan_str)
+            if register_match:
+                logging.info("Setup command received: DEVICE registration.")
+                register_result = handle_register_command(scan_str)
+                return build_setup_mode_response(
+                    message=register_result.get('message', 'Register command processed.'),
+                    success=register_result.get('success', False),
+                    extra_data={
+                        'device_id': register_result.get('device_id'),
+                        'location_id': register_result.get('location_id'),
+                        'bootstrapping_key_id': register_result.get('bootstrapping_key_id'),
+                        'api_endpoint': register_result.get('api_endpoint')
+                    }
                 )
             # Restart Application
             if setup_restart_pattern.match(scan_str):
