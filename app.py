@@ -537,6 +537,8 @@ def handle_register_command(register_config_string):
         if registration_result['success']:
             # Store registration data locally
             store_device_registration(registration_result['data'])
+            # Update Flask config with registration data
+            update_config_from_registration()
             message = f"Device {device_id} successfully registered to {location_id}"
             logging.info(f"Registration successful: {message}")
         else:
@@ -661,16 +663,20 @@ def execute_device_registration(device_id, setup_token, bootstrapping_key_id, lo
         if not register_data.get('success'):
             return {'success': False, 'error': register_data.get('message', 'Registration phase failed')}
         
-        # Return success with registration data
+        # Return success with registration data including human-readable names from API
+        api_data = register_data.get('data', {})
         return {
             'success': True,
             'data': {
                 'device_id': device_id,
                 'account_uid': account_uid,
                 'location_id': location_id,
-                'jwt': register_data.get('data', {}).get('jwt'),
-                'expires_at': register_data.get('data', {}).get('expiresAt'),
-                'api_endpoint': api_endpoint
+                'jwt': api_data.get('jwt'),
+                'expires_at': api_data.get('expiresAt'),
+                'api_endpoint': api_endpoint,
+                'companyName': api_data.get('companyName'),
+                'userName': api_data.get('userName'),
+                'locationName': api_data.get('locationName')
             }
         }
         
@@ -713,12 +719,15 @@ def store_device_registration(registration_data):
     try:
         registration_file = "/opt/genopti-os/device-registration.json"
         
-        # Store essential registration info
+        # Store essential registration info including human-readable names
         registration_info = {
             'device_id': registration_data.get('device_id'),
             'account_uid': registration_data.get('account_uid'),
             'location_id': registration_data.get('location_id'),
             'api_endpoint': registration_data.get('api_endpoint'),
+            'company_name': registration_data.get('companyName', 'N/A'),
+            'user_name': registration_data.get('userName', 'N/A'),
+            'location_name': registration_data.get('locationName', 'N/A'),
             'registered_at': time.time()
         }
         
@@ -748,6 +757,44 @@ def store_device_registration(registration_data):
     except Exception as e:
         logging.error(f"Error storing device registration data: {e}", exc_info=True)
         raise
+
+
+def load_device_registration():
+    """Load device registration data and return registration info."""
+    try:
+        registration_file = "/opt/genopti-os/device-registration.json"
+        
+        if not os.path.exists(registration_file):
+            return None
+            
+        with open(registration_file, 'r') as f:
+            registration_data = json.load(f)
+            
+        logging.info(f"Device registration data loaded successfully")
+        return registration_data
+        
+    except Exception as e:
+        logging.error(f"Error loading device registration data: {e}", exc_info=True)
+        return None
+
+
+def update_config_from_registration():
+    """Update Flask app config with registration data."""
+    try:
+        registration_data = load_device_registration()
+        if not registration_data:
+            logging.info("No registration data found, keeping default config values")
+            return
+        
+        # Update Flask config with registration data using human-readable names
+        current_app.config['REGISTERED_USER'] = registration_data.get('user_name', 'N/A')
+        current_app.config['LOCATION'] = registration_data.get('location_name', 'N/A')
+        current_app.config['COMPANY_NAME'] = registration_data.get('company_name', 'N/A')
+        
+        logging.info(f"Updated config from registration - User: {current_app.config['REGISTERED_USER']}, Location: {current_app.config['LOCATION']}")
+        
+    except Exception as e:
+        logging.error(f"Error updating config from registration: {e}", exc_info=True)
 
 
 # --- Application Restart ---
@@ -1836,6 +1883,10 @@ if __name__ == '__main__':
         # [ Main entry point remains identical - omitted for brevity ]
         logging.info(f"--- Starting {APP_NAME_VERSION} ---")
         load_initial_environment_vars(app)
+        
+        # Load registration data if available to update config
+        with app.app_context():
+            update_config_from_registration()
 
         logging.info(f"Flask Debug mode: {DEBUG_MODE}")
         logging.info(f"Log Level: {logging.getLevelName(LOG_LEVEL)}")
