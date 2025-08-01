@@ -155,6 +155,8 @@ The system can be configured through special QR code commands in setup mode:
 - `$$exit$$` - Exit setup mode
 - `$$serialnumber$${"serial": "XYZ"}` - Update device serial with suffix
 - `$$wifi$${"ssid": "network", "password": "secret", "type": "WPA2", "hidden": false}` - Configure WiFi
+- `$$ping$${"target": "8.8.8.8", "count": 3, "timeout": 5000}` - Test network connectivity
+- `$$register$${"setupToken": "ST_xyz123", "bootstrappingKeyId": "CLIENT_ID", "locationId": "LOC_STORE_001", "apiEndpoint": "https://api.genkinsforge.com"}` - Register device with GenOpti platform
 - `$$restartapp$$` - Restart the application
 
 All configuration commands use the format `$$command$$` followed by a JSON object with the necessary parameters.

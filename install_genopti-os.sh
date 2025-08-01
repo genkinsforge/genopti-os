@@ -142,8 +142,24 @@ if systemctl is-enabled --quiet "$SERVICE_NAME"; then echo "Disabling $SERVICE_N
 # --[ Create or clean application directory (Force Clean Venv) ]---------------
 if [ ! -d "$APP_DIR" ]; then echo "Creating application directory at $APP_DIR..."; mkdir -p "$APP_DIR"; else
     echo "Cleaning application directory $APP_DIR for reinstallation..."
+    
+    # Backup logs
     LOG_BACKUP_DIR="/tmp/genopti-logs-backup"
     if [ -d "$APP_DIR/logs" ]; then echo "Backing up logs to $LOG_BACKUP_DIR..."; rm -rf "$LOG_BACKUP_DIR"; mv "$APP_DIR/logs" "$LOG_BACKUP_DIR"; fi
+    
+    # Backup device registration files
+    REG_BACKUP_DIR="/tmp/genopti-registration-backup"
+    echo "Backing up device registration data to $REG_BACKUP_DIR..."
+    rm -rf "$REG_BACKUP_DIR"; mkdir -p "$REG_BACKUP_DIR"
+    if [ -f "$APP_DIR/device-registration.json" ]; then
+        echo "  - Backing up device-registration.json"
+        cp "$APP_DIR/device-registration.json" "$REG_BACKUP_DIR/"
+    fi
+    if [ -f "$APP_DIR/device-token.json" ]; then
+        echo "  - Backing up device-token.json"
+        cp "$APP_DIR/device-token.json" "$REG_BACKUP_DIR/"
+    fi
+    
     echo "Removing existing virtual environment $VENV_DIR..."; rm -rf "$VENV_DIR"
     find "$APP_DIR" -mindepth 1 -maxdepth 1 -path "$VENV_DIR" -prune -o -exec rm -rf {} \;
 fi
@@ -155,6 +171,30 @@ cp app.py "$APP_DIR/"; cp requirements.txt "$APP_DIR/"; cp -r templates "$APP_DI
 [ -f README.md ] && cp README.md "$APP_DIR/"; [ -f LICENSE ] && cp LICENSE "$APP_DIR/"
 [ -f wifi-credentials.txt.template ] && cp wifi-credentials.txt.template "$APP_DIR/"
 mkdir -p "$APP_DIR/logs"
+
+# --[ Restore backed up data ]------------------------------------------------
+# Restore logs if they were backed up
+if [ -d "$LOG_BACKUP_DIR" ]; then
+    echo "Restoring logs from backup..."
+    rm -rf "$APP_DIR/logs"
+    mv "$LOG_BACKUP_DIR" "$APP_DIR/logs"
+fi
+
+# Restore device registration files if they were backed up
+if [ -d "$REG_BACKUP_DIR" ]; then
+    echo "Restoring device registration data from backup..."
+    if [ -f "$REG_BACKUP_DIR/device-registration.json" ]; then
+        echo "  - Restoring device-registration.json"
+        cp "$REG_BACKUP_DIR/device-registration.json" "$APP_DIR/"
+    fi
+    if [ -f "$REG_BACKUP_DIR/device-token.json" ]; then
+        echo "  - Restoring device-token.json"
+        cp "$REG_BACKUP_DIR/device-token.json" "$APP_DIR/"
+    fi
+    echo "Device registration data restored successfully"
+else
+    echo "No device registration backup found - device will need to be registered"
+fi
 
 # --[ Ensure app.py has Shebang ]---------------------------------------------
 echo "Ensuring $APP_SCRIPT has correct shebang..."

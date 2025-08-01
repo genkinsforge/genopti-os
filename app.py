@@ -44,6 +44,7 @@ log_file_path = "File logging not configured yet."
 APP_NAME_VERSION = "Genopti-OS (v0.48 - Known Code Delimiter + Trailer Truncation)" # Updated version
 DEVICE_ID_FILE = "/etc/device_id"
 SETUP_MODE_FLAG_FILE = os.path.join(APP_ROOT, '.setup_mode_active')
+SETUP_MODE_TIMEOUT_SECONDS = int(os.environ.get('SETUP_MODE_TIMEOUT_SECONDS', '300'))  # 5 minutes default
 
 # --- Logging Setup ---
 # [ Logging setup code remains identical - omitted for brevity ]
@@ -109,20 +110,42 @@ except Exception as e:
 app = Flask(__name__, template_folder=os.path.join(APP_ROOT, 'templates'))
 
 # --- Setup Mode State Management ---
-# [ Setup mode functions remain identical - omitted for brevity ]
 def is_setup_mode():
-    return os.path.exists(SETUP_MODE_FLAG_FILE)
+    """Check if setup mode is active and not timed out."""
+    if not os.path.exists(SETUP_MODE_FLAG_FILE):
+        return False
+    
+    try:
+        # Check if setup mode has timed out
+        stat_info = os.stat(SETUP_MODE_FLAG_FILE)
+        setup_start_time = stat_info.st_mtime
+        current_time = time.time()
+        
+        if current_time - setup_start_time > SETUP_MODE_TIMEOUT_SECONDS:
+            # Setup mode has timed out, automatically exit
+            logging.info(f"Setup mode timed out after {SETUP_MODE_TIMEOUT_SECONDS} seconds, automatically exiting")
+            exit_setup_mode()
+            return False
+        
+        return True
+    except Exception as e:
+        logging.error(f"Error checking setup mode timeout: {e}", exc_info=True)
+        # If we can't check the timeout, assume it's still active
+        return True
 
 def enter_setup_mode():
+    """Enter setup mode with timestamp tracking."""
     try:
-        with open(SETUP_MODE_FLAG_FILE, 'w') as f: f.write('active')
-        logging.info("Entered Setup Mode - Flag file created.")
+        with open(SETUP_MODE_FLAG_FILE, 'w') as f: 
+            f.write(f'active_since_{int(time.time())}')
+        logging.info(f"Entered Setup Mode - Flag file created (timeout: {SETUP_MODE_TIMEOUT_SECONDS}s)")
         return True
     except Exception as e:
         logging.error(f"Failed to create setup mode flag file {SETUP_MODE_FLAG_FILE}: {e}", exc_info=True)
         return False
 
 def exit_setup_mode():
+    """Exit setup mode and clean up flag file."""
     try:
         if os.path.exists(SETUP_MODE_FLAG_FILE):
             os.remove(SETUP_MODE_FLAG_FILE)
@@ -133,6 +156,22 @@ def exit_setup_mode():
     except Exception as e:
         logging.error(f"Failed to remove setup mode flag file {SETUP_MODE_FLAG_FILE}: {e}", exc_info=True)
         return False
+
+def get_setup_mode_time_remaining():
+    """Get the remaining time in setup mode in seconds."""
+    if not os.path.exists(SETUP_MODE_FLAG_FILE):
+        return 0
+    
+    try:
+        stat_info = os.stat(SETUP_MODE_FLAG_FILE)
+        setup_start_time = stat_info.st_mtime
+        current_time = time.time()
+        elapsed_time = current_time - setup_start_time
+        remaining_time = max(0, SETUP_MODE_TIMEOUT_SECONDS - elapsed_time)
+        return int(remaining_time)
+    except Exception as e:
+        logging.error(f"Error calculating setup mode time remaining: {e}", exc_info=True)
+        return 0
 
 # --- Environment/Device ID Functions ---
 # [ Environment/Device ID functions remain identical - omitted for brevity ]
@@ -564,6 +603,127 @@ def handle_register_command(register_config_string):
     except Exception as e:
         logging.error(f"Error handling register command: {e}", exc_info=True)
         return {'success': False, 'message': f'Internal error processing register command: {e}', 'ips': get_non_loopback_ips()}
+
+
+def handle_test_command(test_config_string):
+    """Handles the $$test$${...} command for sending test underage alerts."""
+    import requests
+    
+    try:
+        # Extract JSON from the test command string
+        test_match = re.search(r'\$\$\s*test\s*\$\$\s*(\{.*\})', test_config_string, re.IGNORECASE | re.DOTALL)
+        if not test_match:
+            raise ValueError("Invalid test command format")
+        
+        test_config = json.loads(test_match.group(1))
+        
+        # Validate required fields
+        required_fields = ['type', 'locationId']
+        for field in required_fields:
+            if field not in test_config:
+                raise ValueError(f"Missing required field: {field}")
+        
+        if test_config['type'] != 'underage_alert':
+            raise ValueError(f"Unsupported test type: {test_config['type']}. Only 'underage_alert' is supported.")
+        
+        location_id = test_config['locationId']
+        test_age = test_config.get('testAge', 17)  # Default test age
+        severity = test_config.get('severity', 'high')  # Default severity
+        
+        # Load device registration to get JWT token and API endpoint
+        registration_data = load_device_registration()
+        if not registration_data:
+            raise ValueError("Device not registered. Cannot send test alerts without registration.")
+        
+        # Get JWT token from token file
+        jwt_file = "/opt/genopti-os/device-token.json"
+        if not os.path.exists(jwt_file):
+            raise ValueError("Device JWT token not found. Registration may be incomplete.")
+        
+        with open(jwt_file, 'r') as f:
+            token_data = json.load(f)
+        
+        jwt_token = token_data.get('jwt')
+        if not jwt_token:
+            raise ValueError("JWT token missing from token file.")
+        
+        # Get API endpoint from registration data
+        api_endpoint = registration_data.get('api_endpoint', 'https://api.genkinsforge.com')
+        device_id = registration_data.get('device_id')
+        
+        if not device_id:
+            raise ValueError("Device ID missing from registration data.")
+        
+        # Construct test incident data
+        test_incident = {
+            'incidentId': f'TEST_{int(time.time())}_{device_id}',
+            'deviceId': device_id,
+            'locationId': location_id,
+            'accountUid': registration_data.get('account_uid'),
+            'incidentType': 'underage_detection',
+            'severity': severity,
+            'scanData': {
+                'verification': {
+                    'age': test_age,
+                    'meets_age_requirement': False,
+                    'is_valid': True,
+                    'is_expired': False
+                },
+                'person_hash': hashlib.sha256(f'TEST_PERSON_{int(time.time())}'.encode()).hexdigest(),
+                'scan_timestamp': datetime.now().isoformat()
+            },
+            'detectedAge': test_age,
+            'isTest': True  # Mark as test alert
+        }
+        
+        # Send test alert to API
+        url = f'{api_endpoint}/webhook/underage-alert'
+        headers = {
+            'Authorization': f'Bearer {jwt_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        logging.info(f"Sending test underage alert for device {device_id} to location {location_id}")
+        
+        response = requests.post(url, json=test_incident, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        response_data = response.json()
+        
+        if response_data.get('success', False):
+            logging.info(f"Test alert sent successfully: {response_data}")
+            return {
+                'success': True,
+                'message': f'Test underage alert sent successfully (Age: {test_age}, Location: {location_id})',
+                'alert_id': response_data.get('alertId', 'N/A'),
+                'incident_id': test_incident['incidentId'],
+                'test_age': test_age,
+                'location_id': location_id
+            }
+        else:
+            error_msg = response_data.get('error', {}).get('message', 'Unknown API error')
+            logging.error(f"Test alert API returned error: {error_msg}")
+            return {
+                'success': False,
+                'message': f'Test alert failed: {error_msg}'
+            }
+    
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Network error sending test alert: {e}"
+        logging.error(error_msg)
+        return {'success': False, 'message': error_msg}
+    except json.JSONDecodeError as e:
+        error_msg = f"Invalid JSON in test command: {e}"
+        logging.error(error_msg)
+        return {'success': False, 'message': error_msg}
+    except ValueError as e:
+        error_msg = f"Invalid test command format: {e}"
+        logging.error(error_msg)
+        return {'success': False, 'message': error_msg}
+    except Exception as e:
+        error_msg = f"Unexpected error during test alert: {e}"
+        logging.error(error_msg, exc_info=True)
+        return {'success': False, 'message': error_msg}
 
 
 def get_cpu_serial():
@@ -1430,11 +1590,17 @@ def home():
         scan_inactivity_ms = 300
         initial_setup_mode = False
 
+    # Get setup mode timeout info
+    setup_timeout_seconds = SETUP_MODE_TIMEOUT_SECONDS
+    setup_time_remaining = get_setup_mode_time_remaining() if initial_setup_mode else 0
+
     return render_template('index.html',
                            debug_mode=debug_mode,
                            scan_reset_seconds=scan_reset_seconds,
                            scan_inactivity_ms=scan_inactivity_ms,
-                           initial_setup_mode=initial_setup_mode)
+                           initial_setup_mode=initial_setup_mode,
+                           setup_timeout_seconds=setup_timeout_seconds,
+                           setup_time_remaining=setup_time_remaining)
 
 
 def build_setup_mode_response(message="", success=True, extra_data=None):
@@ -1462,13 +1628,33 @@ def build_setup_mode_response(message="", success=True, extra_data=None):
         'location': location,
         'display_serial': display_serial,
         'cpu_unique_id': cpu_unique_id,
-        'log_file_path': log_file_path
+        'log_file_path': log_file_path,
+        'setup_timeout_seconds': SETUP_MODE_TIMEOUT_SECONDS,
+        'setup_time_remaining': get_setup_mode_time_remaining()
     }
     if extra_data:
         response.update(extra_data)
 
     logging.debug(f"Sending setup mode response: Success={success}, Message='{message}'")
     return jsonify(response)
+
+
+@app.route('/api/setup_status', methods=['GET'])
+def setup_status():
+    """Returns current setup mode status and time remaining."""
+    try:
+        current_setup_mode = is_setup_mode()
+        time_remaining = get_setup_mode_time_remaining() if current_setup_mode else 0
+        
+        return jsonify({
+            'setup_mode': current_setup_mode,
+            'time_remaining': time_remaining,
+            'timeout_seconds': SETUP_MODE_TIMEOUT_SECONDS
+        })
+    except Exception as e:
+        logging.error(f"Error getting setup status: {e}", exc_info=True)
+        return jsonify({'error': 'Failed to get setup status'}), 500
+
 
 @app.route('/process_scan', methods=['POST'])
 def process_scan():
@@ -1491,6 +1677,7 @@ def process_scan():
         setup_ping_pattern = re.compile(r'^\s*\$\$\s*ping\s*\$\$\s*(\{.*\})\s*$', re.IGNORECASE | re.DOTALL)  
         setup_register_pattern = re.compile(r'^\s*\$\$\s*register\s*\$\$\s*(\{.*\})\s*$', re.IGNORECASE | re.DOTALL)
         setup_restart_pattern = re.compile(r'^\s*\$\$\s*restartapp\s*\$\$\s*$', re.IGNORECASE)
+        test_pattern = re.compile(r'^\s*\$\$\s*test\s*\$\$\s*(\{.*\})\s*$', re.IGNORECASE | re.DOTALL)
         generic_setup_pattern = re.compile(r'^\s*\$\$.*\$\$')
 
         # --- Enter Setup Mode ---
@@ -1583,6 +1770,24 @@ def process_scan():
         # --- Normal Scan Processing (Not in Setup Mode) ---
         else:
             logging.debug("Processing scan in Normal Mode.")
+            
+            # --- Test Command Handling (before generic setup pattern check) ---
+            test_match = test_pattern.match(scan_str)
+            if test_match:
+                logging.info("Test command received: SEND TEST UNDERAGE ALERT.")
+                test_result = handle_test_command(scan_str)
+                
+                return jsonify({
+                    'success': test_result.get('success', False),
+                    'setup_mode': False,
+                    'message': test_result.get('message', 'Test command processed.'),
+                    'alert_id': test_result.get('alert_id'),
+                    'incident_id': test_result.get('incident_id'),
+                    'test_age': test_result.get('test_age'),
+                    'location_id': test_result.get('location_id'),
+                    'active_alerts': get_active_alerts()  # Include current alerts
+                })
+            
             if generic_setup_pattern.match(scan_str):
                 logging.warning(f"Setup command '{scan_str[:50]}...' scanned outside setup mode. Ignored.")
                 return jsonify({'success': False, 'setup_mode': False, 'error': "Command ignored. Not in setup mode."}), 400

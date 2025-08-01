@@ -175,6 +175,9 @@
     data-debug-mode="{{ debug_mode|tojson }}"
     data-reset-secs="{{ scan_reset_seconds|tojson }}"
     data-inactivity-ms="{{ scan_inactivity_ms|tojson }}"
+    data-initial-setup-mode="{{ initial_setup_mode|tojson }}"
+    data-setup-timeout-seconds="{{ setup_timeout_seconds|tojson }}"
+    data-setup-time-remaining="{{ setup_time_remaining|tojson }}"
 >
     <!-- Normal Mode Header -->
     <div id="normal-header" class="header-section">
@@ -242,6 +245,10 @@
             <div class="setup-info hidden" id="wifi-completed">
                 <span class="setup-info-title">COMPLETED</span>
             </div>
+            <div class="setup-info">
+                <span class="setup-info-title">Setup Mode Timeout:</span>
+                <span id="setup-timeout-display">--</span>
+            </div>
             <p class="validation-message" id="setup-message"></p>
         </div>
     </div>
@@ -251,6 +258,9 @@
         const debugMode = (document.body.dataset.debugMode === "true");
         const resetSecs = parseInt(document.body.dataset.resetSecs || "15", 10);
         const inactivityMs = parseInt(document.body.dataset.inactivityMs || "300", 10);
+        const initialSetupMode = (document.body.dataset.initialSetupMode === "true");
+        const setupTimeoutSeconds = parseInt(document.body.dataset.setupTimeoutSeconds || "300", 10);
+        let setupTimeRemaining = parseInt(document.body.dataset.setupTimeRemaining || "0", 10);
 
         // DOM Elements
         const inputField = document.getElementById('scanner-input');
@@ -261,11 +271,15 @@
         // Add other frequently accessed elements if needed
 
         // State tracking
-        let currentSetupMode = document.getElementById('setup-header').classList.contains('hidden') ? false : true; // Initial state from template
+        let currentSetupMode = initialSetupMode; // Use data from backend
         let scanBuffer = '';
         let scanTimeout = null;
         let resetTimer = null;
         let isProcessing = false; // Prevent overlapping scans
+        
+        // Setup mode timeout tracking
+        let setupTimeoutTimer = null;
+        let setupCountdownTimer = null;
 
         // --- Initialization ---
         function initializeApp() {
@@ -281,9 +295,10 @@
             document.body.addEventListener('click', focusInputField); // Refocus on click anywhere
 
              // Apply initial state based on template rendering
-            if (document.body.dataset.initialSetupMode === 'true') {
-                 // If template indicates setup mode, force UI update (though it should be correct)
+            if (initialSetupMode) {
+                 // If template indicates setup mode, force UI update and start timeout
                  showSetupMode({/* provide necessary initial data if available */});
+                 startSetupModeTimeout();
             } else {
                  showNormalMode();
             }
@@ -303,6 +318,62 @@
             cutoff.setFullYear(now.getFullYear() - 21);
             document.getElementById('twenty-one-date').textContent =
                 "Must be born before " + cutoff.toLocaleDateString('en-US', opts) + " to be 21+";
+        }
+
+        // --- Setup Mode Timeout Management ---
+        function startSetupModeTimeout() {
+            if (!currentSetupMode) return;
+            
+            console.log(`Starting setup mode timeout: ${setupTimeRemaining} seconds remaining`);
+            
+            // Clear any existing timers
+            clearSetupModeTimers();
+            
+            // Start countdown display update
+            updateSetupTimeoutDisplay();
+            setupCountdownTimer = setInterval(updateSetupTimeoutDisplay, 1000);
+            
+            // If time remaining is already 0 or less, exit immediately
+            if (setupTimeRemaining <= 0) {
+                exitSetupModeTimeout();
+                return;
+            }
+        }
+        
+        function updateSetupTimeoutDisplay() {
+            if (!currentSetupMode) {
+                clearSetupModeTimers();
+                return;
+            }
+            
+            const display = document.getElementById('setup-timeout-display');
+            if (setupTimeRemaining > 0) {
+                const minutes = Math.floor(setupTimeRemaining / 60);
+                const seconds = setupTimeRemaining % 60;
+                display.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                setupTimeRemaining--;
+            } else {
+                display.textContent = "Timing out...";
+                exitSetupModeTimeout();
+            }
+        }
+        
+        function exitSetupModeTimeout() {
+            console.log("Setup mode timeout reached, switching to normal mode");
+            clearSetupModeTimers();
+            showNormalMode();
+            showError("Setup mode timed out. Returned to normal operation.");
+        }
+        
+        function clearSetupModeTimers() {
+            if (setupTimeoutTimer) {
+                clearTimeout(setupTimeoutTimer);
+                setupTimeoutTimer = null;
+            }
+            if (setupCountdownTimer) {
+                clearInterval(setupCountdownTimer);
+                setupCountdownTimer = null;
+            }
         }
 
         // --- Input Handling & Focusing ---
@@ -471,6 +542,17 @@
             currentSetupMode = true; // Ensure state matches UI
             updateSetupInfo(initialData); // Populate with any initial data
             clearTimeout(resetTimer); // No auto-reset in setup mode
+            
+            // Update timeout info from server response if available
+            if (initialData.setup_time_remaining !== undefined) {
+                setupTimeRemaining = initialData.setup_time_remaining;
+            }
+            
+            // Start timeout if not already running
+            if (!setupCountdownTimer) {
+                startSetupModeTimeout();
+            }
+            
             focusInputField();
         }
 
@@ -481,6 +563,10 @@
             normalHeader.classList.remove('hidden');
             normalContent.classList.remove('hidden');
             currentSetupMode = false; // Ensure state matches UI
+            
+            // Clear setup mode timers
+            clearSetupModeTimers();
+            
             clearScreen(); // Clear fields when switching back
             focusInputField();
         }
@@ -509,6 +595,15 @@
                      });
                  } else {
                      ipList.innerHTML = '<li>No active non-loopback interfaces found.</li>';
+                 }
+             }
+             
+             // Update timeout information
+             if (result.setup_time_remaining !== undefined) {
+                 setupTimeRemaining = result.setup_time_remaining;
+                 // Restart timeout display if it's not running
+                 if (!setupCountdownTimer && setupTimeRemaining > 0) {
+                     startSetupModeTimeout();
                  }
              }
          }
