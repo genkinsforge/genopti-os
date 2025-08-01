@@ -2,7 +2,7 @@
 # app.py - Corrected AAMVA Field Splitting Logic (v0.48 - Known Code Delimiter + Trailer Truncation)
 
 # --- Imports ---
-from flask import Flask, render_template, request, jsonify, current_app
+from flask import Flask, render_template, request, jsonify, current_app, Response
 from datetime import datetime, date
 import time
 import re
@@ -654,29 +654,46 @@ def handle_test_command(test_config_string):
         if not device_id:
             raise ValueError("Device ID missing from registration data.")
         
-        # Construct test incident data
+        # Construct test incident data matching API expected format
+        timestamp = int(time.time())
         test_incident = {
-            'incidentId': f'TEST_{int(time.time())}_{device_id}',
+            'incidentId': f'TEST_{timestamp}_{device_id}',
             'deviceId': device_id,
             'locationId': location_id,
-            'accountUid': registration_data.get('account_uid'),
-            'incidentType': 'underage_detection',
-            'severity': severity,
             'scanData': {
+                'scanId': f'SCAN_TEST_{timestamp}',
+                'aamvaData': {
+                    'firstName': 'Test',
+                    'lastName': 'Minor',
+                    'dateOfBirth': '2007-06-15',
+                    'address': {
+                        'street': '123 Test Street',
+                        'city': 'Test City',
+                        'state': 'CA',
+                        'zipCode': '90210'
+                    },
+                    'licenseNumber': f'TEST{timestamp % 1000000}',
+                    'issueDate': '2023-01-01',
+                    'expirationDate': '2028-01-01'
+                },
                 'verification': {
                     'age': test_age,
-                    'meets_age_requirement': False,
-                    'is_valid': True,
-                    'is_expired': False
-                },
-                'person_hash': hashlib.sha256(f'TEST_PERSON_{int(time.time())}'.encode()).hexdigest(),
-                'scan_timestamp': datetime.now().isoformat()
+                    'isUnderage': True,
+                    'attemptedPurchase': 'alcohol'
+                }
             },
-            'detectedAge': test_age,
+            'locationData': {
+                'businessName': registration_data.get('location_name', 'Test Business'),
+                'address': 'Test Business Address',
+                'coordinates': {
+                    'lat': 40.7128,
+                    'lng': -74.0060
+                }
+            },
             'isTest': True  # Mark as test alert
         }
         
-        # Send test alert to API
+        # Send test alert to regular endpoint
         url = f'{api_endpoint}/webhook/underage-alert'
         headers = {
             'Authorization': f'Bearer {jwt_token}',
@@ -684,8 +701,22 @@ def handle_test_command(test_config_string):
         }
         
         logging.info(f"Sending test underage alert for device {device_id} to location {location_id}")
+        logging.info(f"API URL: {url}")
+        logging.info(f"Request headers: {dict(headers)}")
+        logging.info(f"Test payload: {json.dumps(test_incident, indent=2)}")
         
         response = requests.post(url, json=test_incident, headers=headers, timeout=30)
+        
+        # Log detailed response information before checking status
+        logging.info(f"Response status code: {response.status_code}")
+        logging.info(f"Response headers: {dict(response.headers)}")
+        
+        try:
+            response_text = response.text
+            logging.info(f"Response body: {response_text}")
+        except Exception as e:
+            logging.error(f"Could not read response text: {e}")
+        
         response.raise_for_status()
         
         response_data = response.json()
@@ -711,6 +742,15 @@ def handle_test_command(test_config_string):
     except requests.exceptions.RequestException as e:
         error_msg = f"Network error sending test alert: {e}"
         logging.error(error_msg)
+        
+        # Log additional details about the request exception
+        if hasattr(e, 'response') and e.response is not None:
+            logging.error(f"HTTP Response Status: {e.response.status_code}")
+            try:
+                logging.error(f"HTTP Response Body: {e.response.text}")
+            except:
+                logging.error("Could not read response body")
+        
         return {'success': False, 'message': error_msg}
     except json.JSONDecodeError as e:
         error_msg = f"Invalid JSON in test command: {e}"
@@ -1654,6 +1694,65 @@ def setup_status():
     except Exception as e:
         logging.error(f"Error getting setup status: {e}", exc_info=True)
         return jsonify({'error': 'Failed to get setup status'}), 500
+
+
+@app.route('/api/setup_status_stream', methods=['GET'])
+def setup_status_stream():
+    """Server-Sent Events stream for real-time setup mode status updates."""
+    def generate():
+        """Generate SSE events for setup mode status changes."""
+        try:
+            import json
+            import time
+            
+            logging.info("SSE client connected for setup status updates")
+            
+            # Send initial state immediately
+            current_setup_mode = is_setup_mode()
+            time_remaining = get_setup_mode_time_remaining() if current_setup_mode else 0
+            
+            initial_data = {
+                'setup_mode': current_setup_mode,
+                'time_remaining': time_remaining,
+                'timeout_seconds': SETUP_MODE_TIMEOUT_SECONDS,
+                'timestamp': int(time.time())
+            }
+            
+            yield f"data: {json.dumps(initial_data)}\n\n"
+            
+            # Stream updates every 2 seconds
+            while True:
+                try:
+                    current_setup_mode = is_setup_mode()
+                    time_remaining = get_setup_mode_time_remaining() if current_setup_mode else 0
+                    
+                    data = {
+                        'setup_mode': current_setup_mode,
+                        'time_remaining': time_remaining,
+                        'timeout_seconds': SETUP_MODE_TIMEOUT_SECONDS,
+                        'timestamp': int(time.time())
+                    }
+                    
+                    yield f"data: {json.dumps(data)}\n\n"
+                    time.sleep(2)  # Update every 2 seconds
+                    
+                except Exception as e:
+                    logging.error(f"Error in SSE stream generation: {e}", exc_info=True)
+                    break
+                    
+        except Exception as e:
+            logging.error(f"Error setting up SSE stream: {e}", exc_info=True)
+            yield f"data: {json.dumps({'error': 'Stream setup failed'})}\n\n"
+    
+    return Response(
+        generate(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'Access-Control-Allow-Origin': '*'
+        }
+    )
 
 
 @app.route('/process_scan', methods=['POST'])

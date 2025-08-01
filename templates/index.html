@@ -277,8 +277,8 @@
         let resetTimer = null;
         let isProcessing = false; // Prevent overlapping scans
         
-        // Setup mode timeout tracking
-        let setupTimeoutTimer = null;
+        // Setup mode Server-Sent Events
+        let setupStatusEventSource = null;
         let setupCountdownTimer = null;
 
         // --- Initialization ---
@@ -294,11 +294,14 @@
             inputField.addEventListener('input', handleInput);
             document.body.addEventListener('click', focusInputField); // Refocus on click anywhere
 
+             // Initialize SSE connection for real-time setup status updates
+            initializeSetupStatusSSE();
+            
              // Apply initial state based on template rendering
             if (initialSetupMode) {
-                 // If template indicates setup mode, force UI update and start timeout
+                 // If template indicates setup mode, force UI update
                  showSetupMode({/* provide necessary initial data if available */});
-                 startSetupModeTimeout();
+                 startSetupCountdown(setupTimeRemaining);
             } else {
                  showNormalMode();
             }
@@ -320,60 +323,97 @@
                 "Must be born before " + cutoff.toLocaleDateString('en-US', opts) + " to be 21+";
         }
 
-        // --- Setup Mode Timeout Management ---
-        function startSetupModeTimeout() {
-            if (!currentSetupMode) return;
+        // --- Setup Mode SSE Management ---
+        function initializeSetupStatusSSE() {
+            console.log("Initializing Setup Status SSE connection");
             
-            console.log(`Starting setup mode timeout: ${setupTimeRemaining} seconds remaining`);
-            
-            // Clear any existing timers
-            clearSetupModeTimers();
-            
-            // Start countdown display update
-            updateSetupTimeoutDisplay();
-            setupCountdownTimer = setInterval(updateSetupTimeoutDisplay, 1000);
-            
-            // If time remaining is already 0 or less, exit immediately
-            if (setupTimeRemaining <= 0) {
-                exitSetupModeTimeout();
-                return;
+            // Close existing connection if any
+            if (setupStatusEventSource) {
+                setupStatusEventSource.close();
             }
+            
+            // Create new SSE connection
+            setupStatusEventSource = new EventSource('/api/setup_status_stream');
+            
+            setupStatusEventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log("SSE received setup status:", data);
+                    
+                    // Handle setup mode state changes
+                    if (data.setup_mode !== currentSetupMode) {
+                        console.log(`Setup mode changed: ${currentSetupMode} -> ${data.setup_mode}`);
+                        
+                        if (data.setup_mode) {
+                            // Backend entered setup mode
+                            currentSetupMode = true;
+                            setupTimeRemaining = data.time_remaining;
+                            showSetupMode(data);
+                            startSetupCountdown(data.time_remaining);
+                        } else {
+                            // Backend exited setup mode
+                            currentSetupMode = false;
+                            stopSetupCountdown();
+                            showNormalMode();
+                        }
+                    } else if (currentSetupMode && data.setup_mode) {
+                        // Update timeout display if still in setup mode
+                        setupTimeRemaining = data.time_remaining;
+                        updateSetupTimeoutDisplay(data.time_remaining);
+                    }
+                    
+                } catch (error) {
+                    console.error("Error processing SSE setup status:", error);
+                }
+            };
+            
+            setupStatusEventSource.onerror = function(event) {
+                console.error("SSE connection error:", event);
+                // Attempt to reconnect after 5 seconds
+                setTimeout(() => {
+                    if (setupStatusEventSource.readyState === EventSource.CLOSED) {
+                        console.log("Attempting to reconnect SSE...");
+                        initializeSetupStatusSSE();
+                    }
+                }, 5000);
+            };
+            
+            setupStatusEventSource.onopen = function(event) {
+                console.log("SSE connection established");
+            };
         }
         
-        function updateSetupTimeoutDisplay() {
-            if (!currentSetupMode) {
-                clearSetupModeTimers();
-                return;
-            }
-            
-            const display = document.getElementById('setup-timeout-display');
-            if (setupTimeRemaining > 0) {
-                const minutes = Math.floor(setupTimeRemaining / 60);
-                const seconds = setupTimeRemaining % 60;
-                display.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-                setupTimeRemaining--;
-            } else {
-                display.textContent = "Timing out...";
-                exitSetupModeTimeout();
-            }
+        function startSetupCountdown(timeRemaining) {
+            stopSetupCountdown();
+            setupTimeRemaining = timeRemaining;
+            updateSetupTimeoutDisplay(timeRemaining);
         }
         
-        function exitSetupModeTimeout() {
-            console.log("Setup mode timeout reached, switching to normal mode");
-            clearSetupModeTimers();
-            showNormalMode();
-            showError("Setup mode timed out. Returned to normal operation.");
-        }
-        
-        function clearSetupModeTimers() {
-            if (setupTimeoutTimer) {
-                clearTimeout(setupTimeoutTimer);
-                setupTimeoutTimer = null;
-            }
+        function stopSetupCountdown() {
             if (setupCountdownTimer) {
                 clearInterval(setupCountdownTimer);
                 setupCountdownTimer = null;
             }
+        }
+        
+        function updateSetupTimeoutDisplay(timeRemaining) {
+            const display = document.getElementById('setup-timeout-display');
+            if (timeRemaining > 0) {
+                const minutes = Math.floor(timeRemaining / 60);
+                const seconds = timeRemaining % 60;
+                display.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            } else {
+                display.textContent = "Timing out...";
+            }
+        }
+        
+        function closeSetupStatusSSE() {
+            if (setupStatusEventSource) {
+                setupStatusEventSource.close();
+                setupStatusEventSource = null;
+                console.log("SSE connection closed");
+            }
+            stopSetupCountdown();
         }
 
         // --- Input Handling & Focusing ---
@@ -543,16 +583,6 @@
             updateSetupInfo(initialData); // Populate with any initial data
             clearTimeout(resetTimer); // No auto-reset in setup mode
             
-            // Update timeout info from server response if available
-            if (initialData.setup_time_remaining !== undefined) {
-                setupTimeRemaining = initialData.setup_time_remaining;
-            }
-            
-            // Start timeout if not already running
-            if (!setupCountdownTimer) {
-                startSetupModeTimeout();
-            }
-            
             focusInputField();
         }
 
@@ -564,8 +594,8 @@
             normalContent.classList.remove('hidden');
             currentSetupMode = false; // Ensure state matches UI
             
-            // Clear setup mode timers
-            clearSetupModeTimers();
+            // Clear setup mode countdown
+            stopSetupCountdown();
             
             clearScreen(); // Clear fields when switching back
             focusInputField();
@@ -598,14 +628,7 @@
                  }
              }
              
-             // Update timeout information
-             if (result.setup_time_remaining !== undefined) {
-                 setupTimeRemaining = result.setup_time_remaining;
-                 // Restart timeout display if it's not running
-                 if (!setupCountdownTimer && setupTimeRemaining > 0) {
-                     startSetupModeTimeout();
-                 }
-             }
+             // Timeout information is now handled by SSE
          }
 
          function showSetupMessage(msg, success = true) {
