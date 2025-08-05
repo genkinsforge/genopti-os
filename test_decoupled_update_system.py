@@ -40,7 +40,7 @@ def test_file_communication():
     print_test("Version info file creation")
     version_file = os.path.join(comm_dir, "latest_version.json")
     test_version_data = {
-        "current_version": "0.48",
+        "current_version": "1.0",
         "last_checked": datetime.now().isoformat(),
         "update_available": False,
         "daemon_status": "running"
@@ -60,7 +60,7 @@ def test_file_communication():
     try:
         with open(version_file, 'r') as f:
             read_data = json.load(f)
-        success = read_data["current_version"] == "0.48"
+        success = read_data["current_version"] == "1.0"
         print_result("Version info file reading", success, f"Version: {read_data.get('current_version')}")
     except Exception as e:
         print_result("Version info file reading", False, f"Error: {e}")
@@ -274,7 +274,7 @@ def test_update_simulation():
         # Test 1: Create fake update info
         print_test("Update request creation")
         fake_update_info = {
-            'availableVersion': '0.49',
+            'availableVersion': '1.1',
             'checksum': 'sha256:fake_checksum_for_testing',
             'downloadUrl': 'https://example.com/fake-update.tar.gz',
             'installScriptChecksum': 'fake_script_checksum',

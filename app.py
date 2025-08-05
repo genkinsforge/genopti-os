@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# app.py - Corrected AAMVA Field Splitting Logic (v0.48 - Known Code Delimiter + Trailer Truncation)
+# app.py - GenOpti-OS License Scanner
 
 # --- Imports ---
 from flask import Flask, render_template, request, jsonify, current_app, Response
@@ -51,7 +51,18 @@ LOG_LEVEL = logging.DEBUG if DEBUG_MODE else logging.INFO
 LOG_DIR = os.path.join(APP_ROOT, 'logs')
 LOG_FILENAME = 'scanner.log'
 log_file_path = "File logging not configured yet."
-APP_NAME_VERSION = "Genopti-OS (v0.48 - Known Code Delimiter + Trailer Truncation)" # Updated version
+# Read version from version.txt - SINGLE SOURCE OF TRUTH
+def get_app_version():
+    """Get application version from version.txt file."""
+    try:
+        version_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'version.txt')
+        with open(version_file, 'r') as f:
+            version = f.read().strip()
+        return f"Genopti-OS (v{version})"
+    except Exception:
+        return "Genopti-OS (version unknown)"
+
+APP_NAME_VERSION = get_app_version()
 DEVICE_ID_FILE = "/etc/device_id"
 SETUP_MODE_FLAG_FILE = os.path.join(APP_ROOT, '.setup_mode_active')
 SETUP_MODE_TIMEOUT_SECONDS = int(os.environ.get('SETUP_MODE_TIMEOUT_SECONDS', '300'))  # 5 minutes default
@@ -1243,7 +1254,7 @@ class LicenseParser:
         return value
 
 
-    # --- THIS METHOD CONTAINS THE REVISED PARSING LOGIC (v0.48) ---
+    # --- THIS METHOD CONTAINS THE REVISED PARSING LOGIC ---
     @staticmethod
     def sanitize_field_value(field_code: str, value: str) -> str:
         """Sanitizes individual field values for security and data integrity."""
@@ -1321,7 +1332,7 @@ class LicenseParser:
             logging.error(f"Input data too small: {len(data)} characters")
             raise ValueError("Barcode data too small to be valid AAMVA format.")
 
-        # --- Find Start Marker / Header (Same logic as v0.47) ---
+        # --- Find Start Marker / Header ---
         ansi_marker = "ANSI "
         data_start_index = data.find(ansi_marker)
         found_header = False
@@ -1371,7 +1382,7 @@ class LicenseParser:
 
         data_len = len(data)
 
-        # --- Main Parsing Loop (v0.48 - Known Code Delimiter + Trailer Truncation) ---
+        # --- Main Parsing Loop (Known Code Delimiter + Trailer Truncation) ---
         field_count = 0
         while current_index < data_len:
             field_code = data[current_index : current_index + 3]
@@ -1732,19 +1743,17 @@ def build_setup_mode_response(message="", success=True, extra_data=None):
         
         # Get actual current version and software name
         software_name = "GenOpti-OS"
-        version = "v0.48"
+        version = "v0.0"
         try:
-            # Try to get version from version manager first
+            # Get version from version manager (which reads version.txt)
             if 'version_manager' in globals() and version_manager:
                 current_version = version_manager.get_current_version()
-                if current_version and current_version != "0.48":
-                    version = f"v{current_version}"
+                version = f"v{current_version}"
             else:
-                # Fallback: Extract version from APP_NAME_VERSION
-                import re
-                version_match = re.search(r'\(v([\d.]+)', APP_NAME_VERSION)
-                if version_match:
-                    version = f"v{version_match.group(1)}"
+                # Fallback: Read directly from version.txt
+                version_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'version.txt')
+                with open(version_file, 'r') as f:
+                    version = f"v{f.read().strip()}"
         except Exception:
             pass
             

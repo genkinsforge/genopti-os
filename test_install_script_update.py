@@ -104,13 +104,13 @@ class InstallScriptUpdateTest:
         
         # Create a mock update package
         test_package_dir = tempfile.mkdtemp(prefix="genopti_update_test_")
-        package_path = os.path.join(test_package_dir, "genopti-os-v0.49.tar.gz")
+        package_path = os.path.join(test_package_dir, "genopti-os-v1.0.tar.gz")
         
         try:
             # Create mock update files
             mock_files = {
-                "version.txt": "0.49",
-                "app.py": "# Mock updated app.py file\nprint('Updated version 0.49')",
+                "version.txt": "1.0",
+                "app.py": "# Mock updated app.py file\nprint('Updated version 1.0')",
                 "checksums.txt": "abc123  version.txt\ndef456  app.py"
             }
             

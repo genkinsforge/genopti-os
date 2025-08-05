@@ -1,7 +1,7 @@
 {
   "test_name": "GenOpti-OS Decoupled Auto-Update System",
   "test_date": "2025-08-05T12:31:55.395085",
-  "version": "0.48",
+  "version": "0.49",
   "test_environment": "genopti-user development environment",
   "overall_result": "PASS",
   "tests_passed": 7,
@@ -26,7 +26,7 @@
       "status": "PASS", 
       "details": {
         "interface_initialization": "✓ Interface created successfully",
-        "get_version_info": "✓ Returns current version (0.48)",
+        "get_version_info": "✓ Returns current version (0.49)",
         "get_update_status": "✓ Returns idle status",
         "comprehensive_status": "✓ Returns install_script_decoupled method",
         "daemon_detection": "✓ Correctly detects daemon running state"

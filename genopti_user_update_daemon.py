@@ -475,10 +475,10 @@ class GenOptiUserUpdateDaemon:
                     if match:
                         return match.group(1)
             
-            return "0.48"  # Fallback
+            return "0.0"  # Fallback
         except Exception as e:
             logger.error(f"Error getting current version: {e}")
-            return "0.48"
+            return "0.0"
 
 
 def main():

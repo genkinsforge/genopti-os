@@ -55,11 +55,11 @@ class VersionManager:
             
             # Fallback version
             logging.warning("Could not determine current version, using fallback")
-            return "0.48"
+            return "0.0"
             
         except Exception as e:
             logging.error(f"Error getting current version: {e}")
-            return "0.48"
+            return "0.0"
     
     def set_current_version(self, version: str) -> bool:
         """Set the current version and update version info."""
@@ -91,7 +91,7 @@ class VersionManager:
         Returns: -1 if version1 < version2, 0 if equal, 1 if version1 > version2
         """
         try:
-            # Parse version strings (e.g., "0.48" -> [0, 48])
+            # Parse version strings
             v1_parts = [int(x) for x in version1.split('.')]
             v2_parts = [int(x) for x in version2.split('.')]
             
@@ -266,12 +266,12 @@ if __name__ == "__main__":
     print(f"Current version: {current}")
     
     # Test version comparison
-    print(f"0.48 vs 0.49: {vm.compare_versions('0.48', '0.49')}")
-    print(f"0.49 vs 0.48: {vm.compare_versions('0.49', '0.48')}")
-    print(f"0.48 vs 0.48: {vm.compare_versions('0.48', '0.48')}")
+    print(f"1.0 vs 1.1: {vm.compare_versions('1.0', '1.1')}")
+    print(f"1.1 vs 1.0: {vm.compare_versions('1.1', '1.0')}")
+    print(f"1.0 vs 1.0: {vm.compare_versions('1.0', '1.0')}")
     
     # Test update check
-    vm.record_update_check("0.49")
+    vm.record_update_check("1.0")
     
     info = vm.get_version_info()
     print(f"Version info: {json.dumps(info, indent=2)}")

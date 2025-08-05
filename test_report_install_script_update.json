@@ -37,8 +37,8 @@
     {
       "test": "backup_current_version",
       "status": "PASS",
-      "message": "Current version detected: 0.48",
-      "current_version": "0.48"
+      "message": "Current version detected: 0.49",
+      "current_version": "0.49"
     },
     {
       "test": "simulate_update_download",

@@ -12,7 +12,7 @@
           "updates": [
             {
               "type": "software",
-              "currentVersion": "0.48",
+              "currentVersion": "0.49",
               "availableVersion": "0.49",
               "priority": "high",
               "size": "15MB",

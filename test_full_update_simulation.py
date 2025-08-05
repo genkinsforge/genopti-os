@@ -36,11 +36,11 @@ class FullUpdateSimulation:
                 "updatesAvailable": True,
                 "updates": [{
                     "type": "software",
-                    "currentVersion": "0.48",
-                    "availableVersion": "0.49",
+                    "currentVersion": "1.0",
+                    "availableVersion": "1.1",
                     "priority": "high",
                     "size": "15MB",
-                    "downloadUrl": "https://portal.genkinsforge.com/firmware/genopti-os-v0.49.tar.gz",
+                    "downloadUrl": "https://portal.genkinsforge.com/firmware/genopti-os-v1.1.tar.gz",
                     "checksum": "sha256:abc123def456789...",
                     "installScriptChecksum": install_script_checksum,  # Expected install script checksum
                     "updateMethod": "install_script",
@@ -65,11 +65,11 @@ class FullUpdateSimulation:
         
         # Create a realistic mock update package
         mock_files = {
-            "version.txt": "0.49",
+            "version.txt": "1.1",
             "app.py": """#!/usr/bin/env python3
-# app.py - Updated Version (v0.49 - Auto-Update Test)
-APP_NAME_VERSION = "Genopti-OS (v0.49 - Auto-Update Test)"
-print("This is the updated version 0.49")
+# app.py - Updated Version (Auto-Update Test)
+APP_NAME_VERSION = "Genopti-OS (Auto-Update Test)"
+print("This is the updated version")
 """,
             "requirements.txt": """# requirements.txt
 Flask==2.2.5
@@ -80,8 +80,8 @@ werkzeug==2.2.3
 requests==2.31.0
 psutil==5.9.8
 """,
-            "README.md": "# GenOpti-OS v0.49 - Updated with auto-update system",
-            "templates/index.html": "<html><body><h1>GenOpti-OS v0.49 Updated</h1></body></html>"
+            "README.md": "# GenOpti-OS - Updated with auto-update system",
+            "templates/index.html": "<html><body><h1>GenOpti-OS Updated</h1></body></html>"
         }
         
         # Create the mock files
@@ -103,7 +103,7 @@ psutil==5.9.8
         
         # Create tar.gz package
         import tarfile
-        package_path = os.path.join(self.genopti_user_dir, "genopti-os-v0.49.tar.gz")
+        package_path = os.path.join(self.genopti_user_dir, "genopti-os-v1.1.tar.gz")
         
         with tarfile.open(package_path, 'w:gz') as tar:
             tar.add(update_dir, arcname='.')
@@ -293,7 +293,7 @@ psutil==5.9.8
             "step": "verify_update",
             "status": "SUCCESS",
             "message": "Update would complete successfully",
-            "new_version": "0.49"
+            "new_version": "1.1"
         })
         
         results["overall_success"] = True
