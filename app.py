@@ -1672,26 +1672,98 @@ def home():
                            setup_time_remaining=setup_time_remaining)
 
 
+def get_system_hostname():
+    """Get the system hostname."""
+    try:
+        import socket
+        return socket.gethostname()
+    except Exception as e:
+        logging.error(f"Error getting hostname: {e}")
+        return "unknown"
+
+def get_wifi_status():
+    """Get current Wi-Fi configuration status with more detailed information."""
+    try:
+        import subprocess
+        # Check if Wi-Fi is connected
+        result = subprocess.run(['nmcli', '-t', '-f', 'WIFI,STATE', 'general'], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            lines = result.stdout.strip().split('\n')
+            wifi_enabled = False
+            connected = False
+            for line in lines:
+                if 'WIFI' in line and 'enabled' in line:
+                    wifi_enabled = True
+                if 'STATE' in line and 'connected' in line:
+                    connected = True
+            
+            if wifi_enabled and connected:
+                # Get connected SSID
+                ssid_result = subprocess.run(['nmcli', '-t', '-f', 'active,ssid', 'dev', 'wifi'], 
+                                           capture_output=True, text=True, timeout=5)
+                if ssid_result.returncode == 0:
+                    for line in ssid_result.stdout.strip().split('\n'):
+                        if line.startswith('yes:'):
+                            ssid = line.split(':', 1)[1]
+                            return f"Connected to '{ssid}'"
+                return "Connected"
+            elif wifi_enabled:
+                return "Enabled, not connected"
+            else:
+                return "Disabled"
+        else:
+            return "Unable to determine status"
+    except Exception as e:
+        logging.error(f"Error getting Wi-Fi status: {e}")
+        return "Status unavailable"
+
 def build_setup_mode_response(message="", success=True, extra_data=None):
     """Helper to build the standard JSON response for setup mode actions."""
     try:
         ip_info = get_non_loopback_ips()
+        hostname = get_system_hostname()
+        wifi_status = get_wifi_status()
         registered_user = current_app.config.get('REGISTERED_USER', 'N/A')
         company_name = current_app.config.get('COMPANY_NAME', 'N/A')
         location = current_app.config.get('LOCATION', 'N/A')
         display_serial = current_app.config.get('DISPLAY_SERIAL', 'N/A')
         cpu_unique_id = current_app.config.get('CPU_UNIQUE_ID', 'N/A')
+        
+        # Get actual current version and software name
+        software_name = "GenOpti-OS"
+        version = "v0.48"
+        try:
+            # Try to get version from version manager first
+            if 'version_manager' in globals() and version_manager:
+                current_version = version_manager.get_current_version()
+                if current_version and current_version != "0.48":
+                    version = f"v{current_version}"
+            else:
+                # Fallback: Extract version from APP_NAME_VERSION
+                import re
+                version_match = re.search(r'\(v([\d.]+)', APP_NAME_VERSION)
+                if version_match:
+                    version = f"v{version_match.group(1)}"
+        except Exception:
+            pass
+            
     except Exception as e:
         logging.error(f"Error getting system info for setup response: {e}", exc_info=True)
         ip_info = {"error": "Failed to get system info"}
+        hostname, wifi_status = "Error", "Error"
         registered_user, company_name, location, display_serial, cpu_unique_id = ('Error',) * 5
+        software_name, version = "Error", "Error"
 
     response = {
         'success': success,
         'setup_mode': True,
         'message': message,
         'ips': ip_info,
-        'system_name': APP_NAME_VERSION,
+        'hostname': hostname,
+        'software_name': software_name,
+        'version': version,
+        'wifi_status': wifi_status,
         'registered_user': registered_user,
         'company_name': company_name,
         'location': location,

@@ -99,14 +99,17 @@
             transition: background-color 0.3s ease;
         }
 
-        /* Setup content */
+        /* Setup content - optimized for 800x480 */
         #setup-content {
             flex: 1;
-            margin-top: 1rem;
-            padding: 2rem;
+            margin-top: 0.5rem;
+            padding: 1rem;
             border-radius: 8px;
             background-color: #F0F0F0;
             color: #333;
+            font-size: 0.85em;
+            overflow-y: auto;
+            max-height: calc(100vh - 120px);
         }
 
         .valid { background-color: #90EE90; }
@@ -124,11 +127,20 @@
         }
 
         .setup-info {
-            margin-bottom: 1em;
+            margin-bottom: 0.4em;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
         }
         .setup-info-title {
             font-weight: bold;
             margin-right: 0.5em;
+            min-width: 140px;
+            flex-shrink: 0;
+        }
+        .setup-info-value {
+            flex: 1;
+            word-break: break-all;
         }
 
         /* Animation for dots */
@@ -207,36 +219,46 @@
         <!-- Setup Mode Content -->
         <div id="setup-content" class="hidden">
             <div class="setup-info">
-                <span class="setup-info-title">System Name:</span>
-                <span id="setup-system-name"></span>
+                <span class="setup-info-title">Hostname:</span>
+                <span class="setup-info-value" id="setup-hostname"></span>
+            </div>
+            <div class="setup-info">
+                <span class="setup-info-title">Software:</span>
+                <span class="setup-info-value" id="setup-software-name"></span>
+            </div>
+            <div class="setup-info">
+                <span class="setup-info-title">Version:</span>
+                <span class="setup-info-value" id="setup-version"></span>
             </div>
             <div class="setup-info">
                 <span class="setup-info-title">Registered User:</span>
-                <span id="setup-registered-user"></span>
+                <span class="setup-info-value" id="setup-registered-user"></span>
             </div>
             <div class="setup-info">
-                <span class="setup-info-title">Company Name:</span>
-                <span id="setup-company-name"></span>
+                <span class="setup-info-title">Company:</span>
+                <span class="setup-info-value" id="setup-company-name"></span>
             </div>
             <div class="setup-info">
                 <span class="setup-info-title">Location:</span>
-                <span id="setup-location"></span>
+                <span class="setup-info-value" id="setup-location"></span>
             </div>
             <div class="setup-info">
                 <span class="setup-info-title">Display Serial:</span>
-                <span id="setup-display-serial"></span>
+                <span class="setup-info-value" id="setup-display-serial"></span>
             </div>
             <div class="setup-info">
                 <span class="setup-info-title">CPU ID:</span>
-                <span id="setup-cpu-id"></span>
+                <span class="setup-info-value" id="setup-cpu-id"></span>
             </div>
             <div class="setup-info">
-                <span class="setup-info-title">IP Addresses:</span>
-                <ul id="setup-ip-list"></ul>
+                <span class="setup-info-title">Network:</span>
+                <div class="setup-info-value">
+                    <ul id="setup-ip-list" style="margin: 0; padding-left: 1em;"></ul>
+                </div>
             </div>
             <div class="setup-info">
-                <span class="setup-info-title">Wi-Fi Configuration Status:</span>
-                <span id="setup-wifi-status"></span>
+                <span class="setup-info-title">Wi-Fi Status:</span>
+                <span class="setup-info-value" id="setup-wifi-status"></span>
             </div>
             <div class="setup-info hidden" id="wifi-configuring">
                 <span class="setup-info-title">Configuring WIFI</span>
@@ -246,10 +268,10 @@
                 <span class="setup-info-title">COMPLETED</span>
             </div>
             <div class="setup-info">
-                <span class="setup-info-title">Setup Mode Timeout:</span>
-                <span id="setup-timeout-display">--</span>
+                <span class="setup-info-title">Timeout:</span>
+                <span class="setup-info-value" id="setup-timeout-display">--</span>
             </div>
-            <p class="validation-message" id="setup-message"></p>
+            <p class="validation-message" id="setup-message" style="margin-top: 0.5em; font-size: 0.9em;"></p>
         </div>
     </div>
 
@@ -606,12 +628,15 @@
             if (!currentSetupMode) return;
 
              // Update dynamic fields from the result object
-             if (result.system_name) document.getElementById('setup-system-name').textContent = result.system_name;
+             if (result.hostname) document.getElementById('setup-hostname').textContent = result.hostname;
+             if (result.software_name) document.getElementById('setup-software-name').textContent = result.software_name;
+             if (result.version) document.getElementById('setup-version').textContent = result.version;
              if (result.registered_user) document.getElementById('setup-registered-user').textContent = result.registered_user;
              if (result.company_name) document.getElementById('setup-company-name').textContent = result.company_name;
              if (result.location) document.getElementById('setup-location').textContent = result.location;
              if (result.display_serial) document.getElementById('setup-display-serial').textContent = result.display_serial;
              if (result.cpu_unique_id) document.getElementById('setup-cpu-id').textContent = result.cpu_unique_id;
+             if (result.wifi_status) document.getElementById('setup-wifi-status').textContent = result.wifi_status;
 
              // Update IP addresses list
              if (result.ips) {
