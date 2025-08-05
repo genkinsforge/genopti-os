@@ -17,11 +17,15 @@ from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 
 # Setup logging
+import os
+log_dir = '/home/genopti-user/genopti-os/logs'
+os.makedirs(log_dir, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('/home/genopti-user/genopti-os/logs/update_daemon.log'),
+        logging.FileHandler(os.path.join(log_dir, 'update_daemon.log')),
         logging.StreamHandler()
     ]
 )
