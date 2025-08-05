@@ -312,22 +312,43 @@ class GenOptiUserUpdateDaemon:
     def _execute_install_script(self, update_info: Dict, package_path: str) -> Tuple[bool, str]:
         """Execute the install script to perform the update."""
         try:
-            # Copy package to expected location
-            install_package_path = os.path.join(self.genopti_user_dir, os.path.basename(package_path))
-            if package_path != install_package_path:
-                import shutil
-                shutil.copy2(package_path, install_package_path)
+            import tempfile
+            import shutil
+            import tarfile
+            
+            # Create staging directory
+            staging_base = "/tmp/genopti-update-staging"
+            staging_dir = os.path.join(staging_base, f"update-{update_info.get('availableVersion', 'unknown')}")
+            os.makedirs(staging_dir, exist_ok=True)
+            
+            # Extract package to staging directory
+            logger.info(f"Extracting update package to {staging_dir}")
+            with tarfile.open(package_path, 'r:gz') as tar:
+                tar.extractall(staging_dir)
+            
+            # Find the install script in the extracted package
+            install_script_path = os.path.join(staging_dir, "install_genopti-os.sh")
+            if not os.path.exists(install_script_path):
+                # Check if extracted into a subdirectory
+                subdirs = [d for d in os.listdir(staging_dir) if os.path.isdir(os.path.join(staging_dir, d))]
+                if subdirs:
+                    install_script_path = os.path.join(staging_dir, subdirs[0], "install_genopti-os.sh")
+            
+            if not os.path.exists(install_script_path):
+                return False, "Install script not found in update package"
+            
+            # Make install script executable
+            os.chmod(install_script_path, 0o755)
             
             # Set environment variables
             env = os.environ.copy()
             env['GENOPTI_IS_UPDATE'] = '1'
-            env['GENOPTI_UPDATE_PACKAGE'] = install_package_path
             
-            # Execute install script
-            logger.info("Executing install script for update...")
+            # Execute install script from staging area
+            logger.info(f"Executing install script from staging: {install_script_path}")
             result = subprocess.run(
-                ['sudo', self.install_script_path],
-                cwd=self.genopti_user_dir,
+                ['sudo', install_script_path],
+                cwd=os.path.dirname(install_script_path),
                 env=env,
                 capture_output=True,
                 text=True,
@@ -339,18 +360,42 @@ class GenOptiUserUpdateDaemon:
                 
                 # Verify update success
                 time.sleep(10)
-                if self._verify_update_success(update_info.get('availableVersion')):
+                success = self._verify_update_success(update_info.get('availableVersion'))
+                
+                # Cleanup staging directory
+                try:
+                    shutil.rmtree(staging_dir)
+                    logger.info(f"Cleaned up staging directory: {staging_dir}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to cleanup staging directory: {cleanup_error}")
+                
+                if success:
                     return True, f"Update completed successfully to version {update_info.get('availableVersion')}"
                 else:
                     return False, "Update installed but service verification failed"
             else:
                 error_message = f"Install script failed: {result.stderr}"
                 logger.error(error_message)
+                
+                # Cleanup staging directory on failure
+                try:
+                    shutil.rmtree(staging_dir)
+                except Exception:
+                    pass
+                
                 return False, error_message
                 
         except Exception as e:
             error_message = f"Error executing install script: {e}"
             logger.error(error_message)
+            
+            # Cleanup staging directory on exception
+            try:
+                if 'staging_dir' in locals():
+                    shutil.rmtree(staging_dir)
+            except Exception:
+                pass
+            
             return False, error_message
     
     def _validate_install_script_checksum(self, expected_checksum: str) -> bool:

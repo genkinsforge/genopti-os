@@ -336,6 +336,93 @@ else
      echo -e "${RED}And Polkit logs: journalctl -u polkit.service -n 50${NC}"
 fi
 
+# --[ Auto-Update Daemon Setup ]----------------------------------------------
+echo "Setting up GenOpti-User Auto-Update Daemon..."
+
+# Variables for auto-update daemon
+UPDATE_DAEMON_SERVICE="genopti-update-daemon"
+UPDATE_DAEMON_SERVICE_FILE="/etc/systemd/system/${UPDATE_DAEMON_SERVICE}.service"
+UPDATE_DAEMON_HOME_DIR="/home/genopti-user/genopti-os"
+UPDATE_DAEMON_SCRIPT="$UPDATE_DAEMON_HOME_DIR/genopti_user_update_daemon.py"
+SETUP_UPDATE_SCRIPT="$UPDATE_DAEMON_HOME_DIR/setup_update_daemon.sh"
+
+# Check if auto-update files exist in source directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE_DAEMON_SCRIPT="$SCRIPT_DIR/genopti_user_update_daemon.py"
+SOURCE_DAEMON_SERVICE="$SCRIPT_DIR/genopti-update-daemon.service"
+
+if [ -f "$SOURCE_DAEMON_SCRIPT" ] && [ -f "$SOURCE_DAEMON_SERVICE" ]; then
+    echo "Auto-update daemon files found. Setting up..."
+    
+    # Ensure genopti-user home directory exists
+    if ! id "genopti-user" &>/dev/null; then
+        echo "Creating genopti-user..."
+        useradd -r -s /bin/bash -d /home/genopti-user -m genopti-user
+    fi
+    
+    # Create genopti-user's genopti-os directory
+    mkdir -p "$UPDATE_DAEMON_HOME_DIR"
+    
+    # Copy daemon files to genopti-user's directory
+    cp "$SOURCE_DAEMON_SCRIPT" "$UPDATE_DAEMON_SCRIPT"
+    cp "$SOURCE_DAEMON_SERVICE" "$UPDATE_DAEMON_SERVICE_FILE"
+    cp "$SCRIPT_DIR/genopti_svc_update_interface.py" "$UPDATE_DAEMON_HOME_DIR/" 2>/dev/null || true
+    
+    # Set proper ownership and permissions for genopti-user directory
+    chown -R genopti-user:genopti-user "$UPDATE_DAEMON_HOME_DIR"
+    chmod +x "$UPDATE_DAEMON_SCRIPT"
+    echo "Copied daemon files to $UPDATE_DAEMON_HOME_DIR"
+    
+    # Create communication directory with proper permissions
+    mkdir -p /tmp/genopti-updates
+    chmod 755 /tmp/genopti-updates
+    echo "Created communication directory: /tmp/genopti-updates"
+    
+    # Set up sudo access for genopti-user to run install scripts from staging area
+    echo "Configuring sudo access for genopti-user..."
+    cat > /etc/sudoers.d/genopti-user-updates << 'EOF'
+# Allow genopti-user to run install scripts from update staging area
+genopti-user ALL=(ALL) NOPASSWD: /tmp/genopti-update-staging/*/install_genopti-os.sh
+# Allow genopti-user to manage the genopti-os service for updates
+genopti-user ALL=(ALL) NOPASSWD: /bin/systemctl restart genopti-os.service
+genopti-user ALL=(ALL) NOPASSWD: /bin/systemctl stop genopti-os.service
+genopti-user ALL=(ALL) NOPASSWD: /bin/systemctl start genopti-os.service
+genopti-user ALL=(ALL) NOPASSWD: /bin/systemctl is-active genopti-os.service
+genopti-user ALL=(ALL) NOPASSWD: /bin/systemctl status genopti-os.service
+EOF
+    chmod 440 /etc/sudoers.d/genopti-user-updates
+    echo "Configured sudo access for genopti-user"
+    
+    # Configure systemd service for update daemon
+    chmod 644 "$UPDATE_DAEMON_SERVICE_FILE"
+    echo "Copied update daemon service file"
+        
+        # Reload systemd and enable the update daemon
+        systemctl daemon-reload
+        systemctl enable "$UPDATE_DAEMON_SERVICE.service"
+        echo "Enabled $UPDATE_DAEMON_SERVICE service"
+        
+        # Start the update daemon
+        systemctl start "$UPDATE_DAEMON_SERVICE.service"
+        echo "Started $UPDATE_DAEMON_SERVICE service"
+        
+        # Verify update daemon status
+        sleep 2
+        if systemctl is-active --quiet "$UPDATE_DAEMON_SERVICE"; then
+            echo -e "${GREEN}SUCCESS: $UPDATE_DAEMON_SERVICE is active and running.${NC}"
+        else
+            echo -e "${YELLOW}WARN: $UPDATE_DAEMON_SERVICE failed to start. Check logs: journalctl -u $UPDATE_DAEMON_SERVICE${NC}"
+        fi
+    else
+        echo -e "${YELLOW}WARN: Update daemon service file not found. Auto-updates may not work properly.${NC}"
+    fi
+else
+    echo -e "${YELLOW}WARN: Auto-update daemon files not found. Auto-update functionality will not be available.${NC}"
+    echo "Expected files:"
+    echo "  - $UPDATE_DAEMON_SCRIPT"
+    echo "  - $SETUP_UPDATE_SCRIPT"
+fi
+
 # --[ Final Output & Checks ]-------------------------------------------------
 echo "$SERVICE_NAME installed and expected to run under user '$SERVICE_USER'."
 echo "Default ENV Vars: DEBUG_MODE=${DEFAULT_DEBUG_MODE}, SCAN_RESET_SECONDS=${DEFAULT_SCAN_RESET_SECONDS}, SCAN_INACTIVITY_MS=${DEFAULT_SCAN_INACTIVITY_MS}"
@@ -343,6 +430,8 @@ echo "App Directory: $APP_DIR"
 echo "Log Directory: $APP_DIR/logs"
 echo "Device ID File: $DEVICE_ID_FILE"
 echo "Polkit Rule File: $POLKIT_RULE_PATH (if Polkit detected)"
+echo "Auto-Update Daemon: $UPDATE_DAEMON_SERVICE (running from /home/genopti-user/genopti-os/)"
+echo "Communication Directory: /tmp/genopti-updates"
 echo "Performing final network connectivity check..."
 PING_HOST="8.8.8.8"
 if ping -c 1 -W 3 "$PING_HOST" > /dev/null 2>&1; then echo -e "${GREEN}Network connectivity check successful (ping $PING_HOST).${NC}"; else echo ""; echo -e "${YELLOW}================ WARN: No internet connectivity (ping $PING_HOST failed) ================${NC}"; echo -e "${YELLOW}Use Setup Mode ('$$setup$$') and '$$wifi$$' command to configure network.${NC}"; echo -e "${YELLOW}================================================================================${NC}"; fi
