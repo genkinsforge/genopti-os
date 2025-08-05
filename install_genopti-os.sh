@@ -168,6 +168,7 @@ fi
 echo "Copying application files to $APP_DIR..."
 if [ ! -f "app.py" ] || [ ! -f "requirements.txt" ] || [ ! -d "templates" ]; then echo -e "${RED}ERROR: Core application files missing.${NC}"; exit 1; fi
 cp app.py "$APP_DIR/"; cp requirements.txt "$APP_DIR/"; cp -r templates "$APP_DIR/"
+[ -f version.txt ] && cp version.txt "$APP_DIR/"
 [ -f README.md ] && cp README.md "$APP_DIR/"; [ -f LICENSE ] && cp LICENSE "$APP_DIR/"
 [ -f wifi-credentials.txt.template ] && cp wifi-credentials.txt.template "$APP_DIR/"
 mkdir -p "$APP_DIR/logs"
