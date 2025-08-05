@@ -1,0 +1,51 @@
+{
+  "timestamp": "2025-08-04T12:51:52.818287",
+  "test_suite": "install_script_update_method",
+  "overall_success": true,
+  "results": [
+    {
+      "test": "install_script_exists",
+      "status": "PASS",
+      "message": "Install script found and executable"
+    },
+    {
+      "test": "calculate_install_script_checksum",
+      "status": "PASS",
+      "message": "Checksum calculated successfully",
+      "checksum": "544a79fac1d27a6e7ec91dfa31235386bee23e527588032237b50cf3e57e2ac0"
+    },
+    {
+      "test": "validate_install_script_checksum",
+      "status": "PASS",
+      "message": "Checksum validation passed",
+      "expected": "544a79fac1d27a6e7ec91dfa31235386bee23e527588032237b50cf3e57e2ac0",
+      "actual": "544a79fac1d27a6e7ec91dfa31235386bee23e527588032237b50cf3e57e2ac0"
+    },
+    {
+      "test": "user_permissions",
+      "status": "PASS",
+      "message": "Running as user: genopti-user, sudo access: True",
+      "current_user": "genopti-user",
+      "sudo_access": true
+    },
+    {
+      "test": "dry_run_install_script",
+      "status": "PASS",
+      "message": "Install script syntax check passed",
+      "stderr": null
+    },
+    {
+      "test": "backup_current_version",
+      "status": "PASS",
+      "message": "Current version detected: 0.48",
+      "current_version": "0.48"
+    },
+    {
+      "test": "simulate_update_download",
+      "status": "PASS",
+      "message": "Mock update package created successfully",
+      "package_path": "/tmp/genopti_update_test_2dsgf773/genopti-os-v0.49.tar.gz",
+      "package_checksum": "9660e45fb10af64966f2c7a54ffb6c9f417f8fa1dd11937b1169b40728ea68ee"
+    }
+  ]
+}

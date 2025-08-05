@@ -1,0 +1,27 @@
+[Unit]
+Description=GenOpti-OS Update Daemon (genopti-user)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=genopti-user
+Group=genopti-user
+WorkingDirectory=/home/genopti-user/genopti-os
+ExecStart=/usr/bin/python3 /home/genopti-user/genopti-os/genopti_user_update_daemon.py
+Restart=on-failure
+RestartSec=10s
+Environment=PYTHONUNBUFFERED=1
+
+# Allow daemon to perform system updates
+# The daemon needs sudo access to run install scripts
+SupplementaryGroups=sudo
+
+# Security settings (less restrictive since this needs system access)
+PrivateTmp=false
+ProtectSystem=false
+ProtectHome=false
+NoNewPrivileges=false
+
+[Install]
+WantedBy=multi-user.target

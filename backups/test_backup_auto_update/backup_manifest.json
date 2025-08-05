@@ -1,0 +1,20 @@
+{
+  "backup_name": "test_backup_auto_update",
+  "created_at": "2025-08-04T12:31:34.544886",
+  "app_dir": "/home/genopti-user/genopti-os",
+  "files_backed_up": [
+    "version.txt",
+    "version_info.json",
+    "app.py",
+    "aws_integration.py",
+    "version_manager.py",
+    "update_manager.py",
+    "backup_manager.py",
+    "requirements.txt"
+  ],
+  "directories_backed_up": [
+    "templates"
+  ],
+  "include_logs": false,
+  "backup_size": 206929
+}

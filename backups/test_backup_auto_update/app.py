@@ -32,15 +32,18 @@ except ImportError as e:
     logging.warning(f"AWS integration not available: {e}")
     get_aws_client = lambda: None
 
-# Auto-Update System Integration (File-Based Communication)
+# Auto-Update System Integration
 try:
-    from genopti_svc_update_interface import GenOptiSvcUpdateInterface
+    from version_manager import VersionManager
+    from update_manager import UpdateManager
+    from backup_manager import BackupManager
+    from update_installer import UpdateInstaller
     AUTO_UPDATE_AVAILABLE = True
-    logging.info("File-based auto-update interface loaded successfully")
+    logging.info("Auto-update system loaded successfully")
 except ImportError as e:
     AUTO_UPDATE_AVAILABLE = False
     logging.warning(f"Auto-update system not available: {e}")
-    GenOptiSvcUpdateInterface = None
+    VersionManager = UpdateManager = BackupManager = UpdateInstaller = None
 
 # --- Globals and Constants ---
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -119,23 +122,26 @@ except Exception as e:
 # --- Flask App Initialization ---
 app = Flask(__name__, template_folder=os.path.join(APP_ROOT, 'templates'))
 
-# --- Auto-Update System Initialization (File-Based Communication) ---
-update_interface = None
+# --- Auto-Update System Initialization ---
+update_manager = None
+version_manager = None
+backup_manager = None
+update_installer = None
 
 if AUTO_UPDATE_AVAILABLE:
     try:
-        # Initialize file-based update interface
-        update_interface = GenOptiSvcUpdateInterface()
-        logging.info("File-based auto-update interface initialized successfully")
+        # Initialize auto-update system components
+        version_manager = VersionManager(APP_ROOT)
+        update_manager = UpdateManager(APP_ROOT)
+        backup_manager = BackupManager(APP_ROOT)
+        update_installer = UpdateInstaller(APP_ROOT)
         
-        # Check if the update daemon is running
-        if update_interface.is_daemon_running():
-            logging.info("GenOpti-User update daemon is running")
-        else:
-            logging.warning("GenOpti-User update daemon is not running - updates will not be available")
+        # Start automatic update checking if enabled
+        update_manager.start_automatic_checking()
         
+        logging.info("Auto-update system initialized successfully")
     except Exception as e:
-        logging.error(f"Failed to initialize file-based auto-update interface: {e}")
+        logging.error(f"Failed to initialize auto-update system: {e}")
         AUTO_UPDATE_AVAILABLE = False
 
 # --- Setup Mode State Management ---
@@ -2215,19 +2221,20 @@ def handle_exception(e):
 def get_update_status():
     """Get current update system status."""
     try:
-        if not AUTO_UPDATE_AVAILABLE or not update_interface:
+        if not AUTO_UPDATE_AVAILABLE or not update_manager:
             return jsonify({
                 'success': False,
                 'error': 'Auto-update system not available'
             }), 503
         
-        status = update_interface.get_comprehensive_status()
+        status = update_manager.get_update_status()
+        installer_state = update_installer.get_update_state() if update_installer else {}
         
         response = {
             'success': True,
             'data': {
-                'update_method': 'install_script_decoupled',
                 'system_status': status,
+                'installer_state': installer_state,
                 'auto_update_available': AUTO_UPDATE_AVAILABLE
             }
         }
@@ -2246,31 +2253,21 @@ def get_update_status():
 def check_for_updates():
     """Manually trigger update check."""
     try:
-        if not AUTO_UPDATE_AVAILABLE or not update_interface:
+        if not AUTO_UPDATE_AVAILABLE or not update_manager:
             return jsonify({
                 'success': False,
                 'error': 'Auto-update system not available'
             }), 503
         
         logging.info("Manual update check triggered")
-        version_info = update_interface.get_version_info()
-        update_info = None
-        if version_info.get('update_available'):
-            update_info = {
-                'availableVersion': version_info.get('latest_version'),
-                'checksum': version_info.get('update_checksum'),
-                'downloadUrl': version_info.get('download_url'),
-                'installScriptChecksum': version_info.get('install_script_checksum'),
-                'updateMethod': 'install_script'
-            }
+        update_info = update_manager.check_for_updates()
         
         response = {
             'success': True,
             'data': {
                 'update_available': update_info is not None,
                 'update_info': update_info,
-                'current_version': version_info.get('current_version', 'unknown'),
-                'update_method': 'install_script_decoupled'
+                'current_version': version_manager.get_current_version() if version_manager else 'unknown'
             }
         }
         
@@ -2284,14 +2281,11 @@ def check_for_updates():
         }), 500
 
 
-# Download route removed - downloads are now handled by the genopti-user daemon
-
-
-@app.route('/api/update/install', methods=['POST'])
-def install_update():
-    """Install update using file-based communication with genopti-user daemon."""
+@app.route('/api/update/download', methods=['POST'])
+def download_update():
+    """Download available update."""
     try:
-        if not AUTO_UPDATE_AVAILABLE or not update_interface:
+        if not AUTO_UPDATE_AVAILABLE or not update_manager:
             return jsonify({
                 'success': False,
                 'error': 'Auto-update system not available'
@@ -2303,18 +2297,77 @@ def install_update():
         if not update_info:
             return jsonify({
                 'success': False,
-                'error': 'Update info required for install script method'
+                'error': 'Update info required'
             }), 400
         
-        logging.info(f"Installing update to version: {update_info.get('availableVersion')}")
+        logging.info(f"Downloading update: {update_info.get('availableVersion')}")
         
-        # Request update from genopti-user daemon via file communication
-        success, message = update_interface.request_update(update_info)
+        # Download with progress callback (simplified for API)
+        download_path = update_manager.download_update(update_info)
+        
+        if download_path:
+            response = {
+                'success': True,
+                'data': {
+                    'download_path': download_path,
+                    'message': 'Update downloaded successfully'
+                }
+            }
+        else:
+            response = {
+                'success': False,
+                'error': 'Failed to download update'
+            }
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logging.error(f"Error downloading update: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'Failed to download update: {e}'
+        }), 500
+
+
+@app.route('/api/update/install', methods=['POST'])
+def install_update():
+    """Install downloaded update."""
+    try:
+        if not AUTO_UPDATE_AVAILABLE or not update_installer:
+            return jsonify({
+                'success': False,
+                'error': 'Auto-update system not available'
+            }), 503
+        
+        data = request.get_json() or {}
+        package_path = data.get('package_path')
+        expected_checksum = data.get('checksum')
+        force = data.get('force', False)
+        
+        if not package_path:
+            return jsonify({
+                'success': False,
+                'error': 'Package path required'
+            }), 400
+        
+        if not os.path.exists(package_path):
+            return jsonify({
+                'success': False,
+                'error': 'Update package not found'
+            }), 404
+        
+        logging.info(f"Installing update from: {package_path}")
+        
+        # Install update with checksum validation
+        success, message = update_installer.install_update(
+            package_path, 
+            expected_checksum, 
+            force
+        )
         
         response = {
             'success': success,
-            'message': message,
-            'update_method': 'install_script'
+            'message': message
         }
         
         if not success:

@@ -1,0 +1,129 @@
+{
+  "timestamp": "2025-08-04T12:52:00.000000",
+  "simulation": "install_script_update_method",
+  "steps": [
+    {
+      "step": "api_update_check",
+      "status": "SUCCESS",
+      "data": {
+        "success": true,
+        "data": {
+          "updatesAvailable": true,
+          "updates": [
+            {
+              "type": "software",
+              "currentVersion": "0.48",
+              "availableVersion": "0.49",
+              "priority": "high",
+              "size": "15MB",
+              "downloadUrl": "https://portal.genkinsforge.com/firmware/genopti-os-v0.49.tar.gz",
+              "checksum": "sha256:abc123def456789...",
+              "installScriptChecksum": "544a79fac1d27a6e7ec91dfa31235386bee23e527588032237b50cf3e57e2ac0",
+              "updateMethod": "install_script",
+              "releaseNotes": "Bug fixes and performance improvements"
+            }
+          ],
+          "updatePolicy": {
+            "requireConfirmation": true,
+            "maxRetries": 3
+          }
+        }
+      }
+    },
+    {
+      "step": "validate_prerequisites",
+      "status": "SUCCESS",
+      "checks": [
+        {
+          "check": "install_script_checksum",
+          "status": "PASS",
+          "message": "Install script checksum valid"
+        },
+        {
+          "check": "user_permissions",
+          "status": "PASS",
+          "message": "User: genopti-user, sudo: True"
+        },
+        {
+          "check": "disk_space",
+          "status": "PASS",
+          "message": "Free space: 7099MB"
+        },
+        {
+          "check": "service_status",
+          "status": "PASS",
+          "message": "Service running"
+        }
+      ]
+    },
+    {
+      "step": "download_update",
+      "status": "SUCCESS",
+      "package_path": "/home/genopti-user/genopti-os/genopti-os-v0.49.tar.gz",
+      "package_checksum": "1ba7179082c9b3ff7f375284c0d916d4c2dd2e36e2d7a5a3c0fa46f58d7e190e"
+    },
+    {
+      "step": "validate_package_checksum",
+      "status": "SUCCESS",
+      "message": "Package checksum validation passed"
+    },
+    {
+      "step": "execute_install_script",
+      "status": "SUCCESS",
+      "simulation": {
+        "simulation_successful": true,
+        "steps": [
+          {
+            "step": "1. Stop genopti-os service",
+            "status": "SIMULATED",
+            "message": "Would execute successfully"
+          },
+          {
+            "step": "2. Backup current installation to /tmp/genopti-logs-backup",
+            "status": "SIMULATED",
+            "message": "Would execute successfully"
+          },
+          {
+            "step": "3. Backup device registration data",
+            "status": "SIMULATED",
+            "message": "Would execute successfully"
+          },
+          {
+            "step": "4. Extract update package to /opt/genopti-os",
+            "status": "SIMULATED",
+            "message": "Would execute successfully"
+          },
+          {
+            "step": "5. Install Python dependencies from requirements.txt",
+            "status": "SIMULATED",
+            "message": "Would execute successfully"
+          },
+          {
+            "step": "6. Set proper file permissions and ownership",
+            "status": "SIMULATED",
+            "message": "Would execute successfully"
+          },
+          {
+            "step": "7. Restart genopti-os service",
+            "status": "SIMULATED",
+            "message": "Would execute successfully"
+          },
+          {
+            "step": "8. Verify service is running",
+            "status": "SIMULATED",
+            "message": "Would execute successfully"
+          }
+        ],
+        "preserves_registration": true,
+        "estimated_downtime": "30-60 seconds"
+      }
+    },
+    {
+      "step": "verify_update",
+      "status": "SUCCESS",
+      "message": "Update would complete successfully",
+      "new_version": "0.49"
+    }
+  ],
+  "overall_success": true
+}
