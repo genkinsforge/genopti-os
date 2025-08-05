@@ -1700,14 +1700,10 @@ def get_wifi_status():
         result = subprocess.run(['nmcli', '-t', '-f', 'WIFI,STATE', 'general'], 
                               capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
-            lines = result.stdout.strip().split('\n')
-            wifi_enabled = False
-            connected = False
-            for line in lines:
-                if 'WIFI' in line and 'enabled' in line:
-                    wifi_enabled = True
-                if 'STATE' in line and 'connected' in line:
-                    connected = True
+            output = result.stdout.strip()
+            # Parse output which looks like "enabled:connected"
+            wifi_enabled = 'enabled' in output
+            connected = 'connected' in output
             
             if wifi_enabled and connected:
                 # Get connected SSID
